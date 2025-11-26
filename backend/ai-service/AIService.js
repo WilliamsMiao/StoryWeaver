@@ -494,11 +494,13 @@ ${chapterContent}
 2. 为每个玩家分配独特的线索（每人2-3条）
 
 ## 设计原则：
+- 核心谜题**必须严格基于当前章节的故事内容**，直接关联剧情中的事件、人物、线索
+- 谜题答案必须是**唯一、明确、具体的答案**（如人名、地点、物品、时间等），不能模糊或有多种解释
+- 答案必须能够通过关键词精确验证（提供3-5个核心关键词，必须包含在正确答案中）
 - 核心谜题必须需要多人信息整合才能解决
 - 每个玩家的线索都是解谜的一部分，但单独无法得出答案
 - 线索之间要有关联性，鼓励玩家互相交流
 - 有些线索可以是误导性的，增加推理难度
-- 谜题答案必须明确，能够验证对错
 
 ## 线索类型：
 - 目击证词：玩家"看到"或"听到"的信息
@@ -512,11 +514,12 @@ ${players.map((p, i) => `${i+1}. ${p.username}（ID: ${p.id}）`).join('\n')}
 ## 返回格式（严格JSON）：
 {
   "puzzle": {
-    "question": "核心谜题问题（让玩家思考和推理的问题）",
-    "correct_answer": "正确答案（简洁明确）",
-    "answer_keywords": "关键词1|关键词2|关键词3（用于判断答案是否正确）",
+    "question": "核心谜题问题（必须基于章节内容的具体问题，如'是谁偷走了XX'、'凶手使用的作案工具是什么'等）",
+    "correct_answer": "正确答案（必须是唯一、明确的答案，如具体的人名、物品名、地点名等）",
+    "answer_keywords": "关键词1|关键词2|关键词3|关键词4|关键词5（至少3-5个核心关键词，用于精确判断答案正确性）",
     "difficulty": 3,
-    "hints": ["提示1", "提示2", "提示3"]
+    "hints": ["提示1", "提示2", "提示3"],
+    "next_steps": "玩家答对后的明确指示（如：'前往书房调查'、'询问管家关于XX的事'、'检查花园的痕迹'等具体行动指引）"
   },
   "playerClues": {
     "玩家ID": [
@@ -537,11 +540,14 @@ ${storyContext.background || ''}
 当前章节内容：
 ${chapterContent}
 
-请为这${playerCount}个玩家设计谜题和线索。确保：
-1. 每个玩家得到2-3条独特线索
-2. 线索内容不能重复
-3. 必须整合所有人的线索才能解开谜题
-4. 返回严格的JSON格式`;
+请为这${playerCount}个玩家设计谜题和线索。**重要要求**：
+1. 谜题必须**严格基于上述章节内容**，从章节中的具体情节、对话、发现中提炼
+2. 答案必须是**唯一、明确的**（如具体的人名、物品、地点等），不能有歧义
+3. 每个玩家得到2-3条独特线索
+4. 线索内容不能重复
+5. 必须整合所有人的线索才能解开谜题
+6. 提供明确的"下一步行动指示"（next_steps），告诉玩家答对后应该做什么
+7. 返回严格的JSON格式`;
 
     try {
       const response = await this.requestQueue.enqueue(
@@ -594,7 +600,8 @@ ${chapterContent}
       correct_answer: '需要根据线索推理',
       answer_keywords: '凶手|动机|真相',
       difficulty: 3,
-      hints: ['注意时间线的矛盾', '有人在撒谎', '物证不会说谎']
+      hints: ['注意时间线的矛盾', '有人在撒谎', '物证不会说谎'],
+      next_steps: '继续调查其他可疑人员，收集更多证据'
     };
 
     const playerClues = {};
@@ -718,11 +725,20 @@ ${chapterContent.substring(0, 1000)}
    * @returns {Object} { isCorrect, confidence, feedback }
    */
   async validatePuzzleAnswer(playerAnswer, puzzle) {
+    // 验证配置常量
+    const VALIDATION_CONFIG = {
+      KEYWORD_WEIGHT: 0.7,
+      ANSWER_WEIGHT: 0.3,
+      CORRECT_THRESHOLD: 0.7,
+      HIGH_CONFIDENCE_THRESHOLD: 0.85,
+      NEAR_THRESHOLD: 0.4
+    };
+    
     const keywords = (puzzle.answer_keywords || '').split('|').map(k => k.trim().toLowerCase());
     const answerLower = playerAnswer.toLowerCase();
     const correctAnswerLower = (puzzle.correct_answer || '').toLowerCase();
     
-    // 检查关键词匹配
+    // 检查关键词匹配 - 要求更严格的匹配
     const matchedKeywords = keywords.filter(k => answerLower.includes(k));
     const keywordMatch = matchedKeywords.length / Math.max(keywords.length, 1);
     
@@ -730,27 +746,39 @@ ${chapterContent.substring(0, 1000)}
     const correctAnswerParts = correctAnswerLower.split(/[，。、\s]+/).filter(p => p.length > 1);
     const answerMatch = correctAnswerParts.filter(p => answerLower.includes(p)).length / Math.max(correctAnswerParts.length, 1);
     
-    const confidence = (keywordMatch * 0.6 + answerMatch * 0.4);
-    const isCorrect = confidence >= 0.5; // 50%匹配度视为正确
+    // 计算置信度并判断正确性
+    const confidence = (keywordMatch * VALIDATION_CONFIG.KEYWORD_WEIGHT + answerMatch * VALIDATION_CONFIG.ANSWER_WEIGHT);
+    const isCorrect = confidence >= VALIDATION_CONFIG.CORRECT_THRESHOLD;
 
     let feedback = '';
+    let nextSteps = puzzle.next_steps || '';
+    
     if (isCorrect) {
-      if (confidence >= 0.8) {
-        feedback = '🎉 完全正确！你成功解开了这个谜题！';
+      if (confidence >= VALIDATION_CONFIG.HIGH_CONFIDENCE_THRESHOLD) {
+        feedback = '🎉 完全正确！你成功解开了这个谜题！\n\n';
       } else {
-        feedback = '✅ 基本正确！你的推理方向是对的！';
+        feedback = '✅ 正确！你的推理方向完全对了！\n\n';
       }
-    } else if (confidence >= 0.3) {
-      feedback = '🤔 接近了，但还差一点...再想想？';
+      
+      // 添加明确的下一步指示
+      if (nextSteps) {
+        feedback += `📍 **下一步行动**：${nextSteps}\n\n`;
+        feedback += '💡 当所有玩家都解开谜题后，故事将自动推进到下一章节。';
+      } else {
+        feedback += '💡 等待其他玩家完成解谜，故事即将继续推进...';
+      }
+    } else if (confidence >= VALIDATION_CONFIG.NEAR_THRESHOLD) {
+      feedback = '🤔 答案接近了，但还不够准确...请再仔细思考一下？\n\n💭 提示：答案应该更加具体和明确。';
     } else {
-      feedback = '❌ 这个答案似乎偏离了方向，需要更多线索吗？';
+      feedback = '❌ 这个答案似乎偏离了方向。\n\n💡 建议：回顾你获得的线索，或者向故事机询问更多提示。';
     }
 
     return {
       isCorrect,
       confidence,
       matchedKeywords,
-      feedback
+      feedback,
+      nextSteps: isCorrect ? nextSteps : null
     };
   }
 

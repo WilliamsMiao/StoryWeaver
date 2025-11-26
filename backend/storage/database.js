@@ -248,6 +248,7 @@ class Database {
         correct_answer TEXT NOT NULL,
         answer_keywords TEXT,
         difficulty INTEGER DEFAULT 3,
+        next_steps TEXT DEFAULT "",
         solved INTEGER DEFAULT 0,
         solved_by TEXT,
         solved_at DATETIME,
@@ -413,6 +414,30 @@ class Database {
     await this.db.run(`CREATE INDEX IF NOT EXISTS idx_player_interactions_story ON player_interactions(story_id)`);
     
     console.log('数据库表初始化完成');
+    
+    // 运行迁移
+    await this.runMigrations();
+  }
+  
+  /**
+   * 运行数据库迁移
+   * 处理新增字段等数据库结构变更
+   */
+  async runMigrations() {
+    try {
+      // 检查 chapter_puzzles 表是否有 next_steps 列
+      const tableInfo = await this.db.all('PRAGMA table_info(chapter_puzzles)');
+      const hasNextSteps = tableInfo.some(col => col.name === 'next_steps');
+      
+      if (!hasNextSteps) {
+        console.log('执行迁移：添加 next_steps 列到 chapter_puzzles 表');
+        await this.db.run('ALTER TABLE chapter_puzzles ADD COLUMN next_steps TEXT DEFAULT ""');
+        console.log('迁移完成：next_steps 列已添加');
+      }
+    } catch (error) {
+      console.error('数据库迁移失败:', error);
+      // 不抛出错误，允许应用继续运行
+    }
   }
   
   async close() {
@@ -1266,11 +1291,11 @@ class Database {
    * @param {Object} puzzle - 谜题数据
    */
   async createChapterPuzzle(puzzle) {
-    const { id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty = 3 } = puzzle;
+    const { id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty = 3, nextSteps = '' } = puzzle;
     await this.db.run(
-      `INSERT INTO chapter_puzzles (id, chapter_id, story_id, puzzle_question, correct_answer, answer_keywords, difficulty)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty]
+      `INSERT INTO chapter_puzzles (id, chapter_id, story_id, puzzle_question, correct_answer, answer_keywords, difficulty, next_steps)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty, nextSteps]
     );
   }
 
