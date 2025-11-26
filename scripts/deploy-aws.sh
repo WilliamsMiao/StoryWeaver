@@ -219,3 +219,4 @@ log_info "查看状态: ssh -i $SSH_KEY $SERVER_USER@$SERVER_HOST 'cd $REMOTE_DI
 log_info "停止服务: ssh -i $SSH_KEY $SERVER_USER@$SERVER_HOST 'cd $REMOTE_DIR && docker-compose down'"
 log_success "=========================================="
 
+
