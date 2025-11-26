@@ -18,7 +18,7 @@ export default function GameRoom() {
   // 复制房间ID
   const copyRoomId = useCallback(() => {
     if (room?.id) {
-      navigator.clipboard.writeText(room.id).then(() => {
+      navigator.clipboard.writeText(String(room.id)).then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       });
@@ -74,7 +74,7 @@ export default function GameRoom() {
                 title="点击复制房间ID，分享给好友加入"
               >
                 <span className="text-xs opacity-70">ID:</span>
-                <span className="font-mono">{room.id.slice(0, 8)}...</span>
+                <span className="font-mono text-xl font-bold tracking-widest">{room.id}</span>
                 <span>{copied ? '✓' : '📋'}</span>
               </button>
               <span className="bg-pixel-wood-dark/50 px-2 py-0.5 rounded">

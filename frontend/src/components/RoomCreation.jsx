@@ -44,11 +44,17 @@ export default function RoomCreation() {
 
   const handleJoinRoom = (e) => {
     e.preventDefault();
-    if (!roomId.trim()) {
+    const trimmedRoomId = roomId.trim();
+    if (!trimmedRoomId) {
       setError('请输入房间ID');
       return;
     }
-    joinRoom(roomId.trim());
+    // 验证房间ID为5位数字
+    if (!/^\d{5}$/.test(trimmedRoomId)) {
+      setError('房间ID必须是5位数字');
+      return;
+    }
+    joinRoom(trimmedRoomId);
   };
 
   if (mode === 'username') {
@@ -159,11 +165,18 @@ export default function RoomCreation() {
               <input
                 type="text"
                 value={roomId}
-                onChange={(e) => setRoomId(e.target.value)}
-                className="input-field w-full"
-                placeholder="输入房间ID"
+                onChange={(e) => {
+                  // 只允许输入数字，最多5位
+                  const value = e.target.value.replace(/\D/g, '').slice(0, 5);
+                  setRoomId(value);
+                }}
+                className="input-field w-full text-center text-2xl font-bold tracking-widest"
+                placeholder="00000"
+                maxLength={5}
+                pattern="[0-9]{5}"
                 required
               />
+              <p className="text-sm text-pixel-text-muted mt-1 text-center">请输入5位数字房间ID</p>
             </div>
 
             {error && (

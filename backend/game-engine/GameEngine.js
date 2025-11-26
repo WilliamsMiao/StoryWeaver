@@ -28,9 +28,35 @@ class GameEngine {
     this.emptyRoomGracePeriodMs = EMPTY_ROOM_GRACE_PERIOD_MS;
   }
   
+  // 生成5位数字房间ID
+  async generateRoomId() {
+    const maxAttempts = 100; // 最多尝试100次
+    let attempts = 0;
+    
+    while (attempts < maxAttempts) {
+      // 生成5位数字ID (10000-99999)
+      const roomId = String(Math.floor(Math.random() * 90000) + 10000);
+      
+      // 检查内存中是否已存在
+      if (!this.rooms.has(roomId)) {
+        // 检查数据库中是否已存在
+        const existingRoom = await database.getRoom(roomId);
+        if (!existingRoom) {
+          return roomId;
+        }
+      }
+      
+      attempts++;
+    }
+    
+    // 如果100次都失败，使用时间戳+随机数作为后备方案
+    console.warn('生成5位数字房间ID失败，使用备用方案');
+    return String(Date.now()).slice(-5) + String(Math.floor(Math.random() * 10));
+  }
+  
   // 创建房间
   async createRoom(name, hostId, hostUsername) {
-    const roomId = uuidv4();
+    const roomId = await this.generateRoomId();
     
     // 确保玩家存在
     let player = await database.getPlayer(hostId);
