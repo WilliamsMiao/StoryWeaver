@@ -130,11 +130,16 @@ jobs:
             echo "代码已通过rsync同步到服务器"
             echo "由于docker-compose.yml中已配置代码目录volume挂载，容器会自动使用最新代码"
             
-            # 检查是否有前端代码更新
-            FRONTEND_CHANGED=$(echo "${{ needs.detect-changes.outputs.changed-files }}" | grep -E "^frontend/src/" || true)
+            # 检查是否有前端代码更新（包括前端源代码、配置文件等）
+            FRONTEND_CHANGED=$(echo "${{ needs.detect-changes.outputs.changed-files }}" | grep -E "^frontend/" || true)
             if [ -n "$FRONTEND_CHANGED" ]; then
               echo "检测到前端代码更新，重新构建前端静态文件..."
+              # 强制重新构建static-init镜像（确保使用最新代码）
+              docker compose build static-init || true
+              # 运行static-init重新构建前端
               docker compose run --rm static-init || true
+              echo "前端静态文件构建完成，重启nginx..."
+              docker compose restart nginx
             else
               echo "未检测到前端代码更新，跳过前端构建"
             fi
