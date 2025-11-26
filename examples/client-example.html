@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StoryWeaver 客户端示例</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        input, textarea, button {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            box-sizing: border-box;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .log {
+            background: #f5f5f5;
+            padding: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .chapter {
+            background: #e7f3ff;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 3px solid #007bff;
+        }
+    </style>
+</head>
+<body>
+    <h1>StoryWeaver 客户端示例</h1>
+    
+    <div class="section">
+        <h2>连接设置</h2>
+        <input type="text" id="serverUrl" placeholder="服务器地址" value="http://localhost:3000">
+        <input type="text" id="playerId" placeholder="玩家ID" value="player1">
+        <input type="text" id="username" placeholder="用户名" value="Alice">
+        <button onclick="connect()">连接服务器</button>
+    </div>
+    
+    <div class="section">
+        <h2>房间操作</h2>
+        <input type="text" id="roomName" placeholder="房间名称" value="我的故事房间">
+        <button onclick="createRoom()">创建房间</button>
+        <input type="text" id="roomId" placeholder="房间ID">
+        <button onclick="joinRoom()">加入房间</button>
+        <button onclick="getRoomStatus()">获取房间状态</button>
+    </div>
+    
+    <div class="section">
+        <h2>故事操作</h2>
+        <input type="text" id="storyTitle" placeholder="故事标题" value="冒险之旅">
+        <textarea id="storyBackground" placeholder="故事背景" rows="3">在一个遥远的魔法世界中...</textarea>
+        <button onclick="initializeStory()">初始化故事</button>
+    </div>
+    
+    <div class="section">
+        <h2>发送消息</h2>
+        <textarea id="message" placeholder="输入你的故事想法..." rows="3">主角发现了一个神秘的宝箱</textarea>
+        <button onclick="sendMessage()">发送消息生成故事</button>
+    </div>
+    
+    <div class="section">
+        <h2>日志</h2>
+        <div id="log" class="log"></div>
+    </div>
+    
+    <div class="section">
+        <h2>故事章节</h2>
+        <div id="chapters"></div>
+    </div>
+    
+    <script>
+        let socket = null;
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${time}] ${message}<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const playerId = document.getElementById('playerId').value;
+            
+            if (socket) {
+                socket.disconnect();
+            }
+            
+            socket = io(serverUrl);
+            
+            socket.on('connect', () => {
+                log('✅ 已连接到服务器');
+            });
+            
+            socket.on('disconnect', () => {
+                log('❌ 与服务器断开连接');
+            });
+            
+            socket.on('room_updated', (room) => {
+                log(`📢 房间更新: ${room.name} (${room.playerCount} 玩家)`);
+            });
+            
+            socket.on('new_chapter', (data) => {
+                log(`📖 新章节生成! 作者: ${data.author.username}`);
+                addChapter(data.chapter, data.author);
+            });
+            
+            socket.on('story_initialized', (data) => {
+                log(`✨ 故事已初始化: ${data.story.title}`);
+            });
+        }
+        
+        function createRoom() {
+            if (!socket || !socket.connected) {
+                alert('请先连接服务器');
+                return;
+            }
+            
+            const name = document.getElementById('roomName').value;
+            const playerId = document.getElementById('playerId').value;
+            const username = document.getElementById('username').value;
+            
+            socket.emit('create_room', { name, playerId, username }, (response) => {
+                if (response.error) {
+                    log(`❌ 错误: ${response.error}`);
+                } else {
+                    log(`✅ 房间创建成功: ${response.room.id}`);
+                    document.getElementById('roomId').value = response.room.id;
+                }
+            });
+        }
+        
+        function joinRoom() {
+            if (!socket || !socket.connected) {
+                alert('请先连接服务器');
+                return;
+            }
+            
+            const roomId = document.getElementById('roomId').value;
+            const playerId = document.getElementById('playerId').value;
+            const username = document.getElementById('username').value;
+            
+            socket.emit('join_room', { roomId, playerId, username }, (response) => {
+                if (response.error) {
+                    log(`❌ 错误: ${response.error}`);
+                } else {
+                    log(`✅ 加入房间成功: ${response.room.name}`);
+                }
+            });
+        }
+        
+        function getRoomStatus() {
+            if (!socket || !socket.connected) {
+                alert('请先连接服务器');
+                return;
+            }
+            
+            const roomId = document.getElementById('roomId').value;
+            
+            socket.emit('get_room_status', { roomId }, (response) => {
+                if (response.error) {
+                    log(`❌ 错误: ${response.error}`);
+                } else {
+                    log(`📊 房间状态: ${JSON.stringify(response.room, null, 2)}`);
+                }
+            });
+        }
+        
+        function initializeStory() {
+            if (!socket || !socket.connected) {
+                alert('请先连接服务器');
+                return;
+            }
+            
+            const title = document.getElementById('storyTitle').value;
+            const background = document.getElementById('storyBackground').value;
+            
+            socket.emit('initialize_story', { title, background }, (response) => {
+                if (response.error) {
+                    log(`❌ 错误: ${response.error}`);
+                } else {
+                    log(`✅ 故事初始化成功`);
+                }
+            });
+        }
+        
+        function sendMessage() {
+            if (!socket || !socket.connected) {
+                alert('请先连接服务器');
+                return;
+            }
+            
+            const message = document.getElementById('message').value;
+            
+            socket.emit('send_message', { message }, (response) => {
+                if (response.error) {
+                    log(`❌ 错误: ${response.error}`);
+                } else {
+                    log(`✅ 消息已发送，故事生成中...`);
+                }
+            });
+        }
+        
+        function addChapter(chapter, author) {
+            const chaptersDiv = document.getElementById('chapters');
+            const chapterDiv = document.createElement('div');
+            chapterDiv.className = 'chapter';
+            chapterDiv.innerHTML = `
+                <strong>第 ${chapter.chapterNumber} 章</strong>
+                <p>${chapter.content}</p>
+                <small>作者: ${author.username} | ${new Date(chapter.createdAt).toLocaleString()}</small>
+            `;
+            chaptersDiv.appendChild(chapterDiv);
+        }
+    </script>
+</body>
+</html>
+

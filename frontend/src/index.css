@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-pixel-bg text-pixel-text font-pixel text-xl;
+    background-image: 
+      radial-gradient(circle at 50% 50%, #3a2c3b 2px, transparent 2.5px),
+      radial-gradient(circle at 50% 50%, #3a2c3b 2px, transparent 2.5px);
+    background-size: 32px 32px;
+    background-position: 0 0, 16px 16px;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-bold tracking-wide text-pixel-wood-dark;
+    text-shadow: 2px 2px 0px rgba(255,255,255,0.5);
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-pixel-accent-blue text-white font-bold py-2 px-6 transition-all transform active:translate-y-1 active:shadow-none border-2 border-white shadow-pixel hover:brightness-110;
+    image-rendering: pixelated;
+  }
+  
+  .btn-secondary {
+    @apply bg-pixel-wood text-white font-bold py-2 px-6 transition-all transform active:translate-y-1 active:shadow-none border-2 border-pixel-wood-dark shadow-pixel hover:brightness-110;
+  }
+  
+  .input-field {
+    @apply bg-pixel-text-light border-4 border-pixel-wood-dark px-4 py-2 text-pixel-text focus:outline-none focus:ring-0 shadow-pixel-inset;
+    font-family: 'VT323', monospace;
+    font-size: 1.25rem;
+  }
+  
+  .input-field::placeholder {
+    @apply text-pixel-text-muted;
+  }
+  
+  .card {
+    @apply bg-pixel-panel border-4 border-pixel-wood-dark p-6 shadow-pixel relative;
+  }
+
+  /* 装饰性边角 */
+  .card::after {
+    content: '';
+    @apply absolute top-2 left-2 right-2 bottom-2 border-2 border-pixel-wood opacity-50 pointer-events-none;
+  }
+
+  /* 滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-pixel-wood-dark;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-pixel-wood-light border-2 border-pixel-wood-dark;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-pixel-wood;
+  }
+}
+
