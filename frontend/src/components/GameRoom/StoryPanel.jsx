@@ -1,16 +1,38 @@
 import { useEffect, useRef, useState } from 'react';
 import { useGame } from '../../context/GameContext';
+import CharacterCard from './CharacterCard';
+import socketManager from '../../utils/socket';
 
 export default function StoryPanel() {
-  const { story, messages, room, storyMachineMessages, player, initializeStory, storyInitializing } = useGame();
+  const { 
+    story, messages, room, storyMachineMessages, directMessages, 
+    unreadDirectCount, clearUnreadDirectCount, player, initializeStory, 
+    storyInitializing, currentPuzzle, puzzleProgress, puzzleSolvedNotification 
+  } = useGame();
   const messagesEndRef = useRef(null);
-  const [viewMode, setViewMode] = useState('global'); // 'global' | 'storyMachine'
+  const [viewMode, setViewMode] = useState('global'); // 'global' | 'storyMachine' | 'direct'
   
   // 故事初始化相关状态
   const isHost = room?.hostId === player?.id;
   const [showInitForm, setShowInitForm] = useState(false);
   const [storyTitle, setStoryTitle] = useState('');
   const [storyBackground, setStoryBackground] = useState('');
+  
+  // 角色卡片相关状态
+  const [selectedCharacter, setSelectedCharacter] = useState(null);
+  const [storyCharacters, setStoryCharacters] = useState([]);
+  
+  // 获取故事中的角色列表
+  useEffect(() => {
+    if (story?.id) {
+      socketManager.emit('get_characters', { storyId: story.id }, (response) => {
+        if (response.success && response.characters) {
+          setStoryCharacters(response.characters);
+          console.log('📋 已加载故事角色:', response.characters);
+        }
+      });
+    }
+  }, [story?.id, story?.chapters?.length]);
   
   // 调试：检查消息数据
   useEffect(() => {
@@ -34,20 +56,33 @@ export default function StoryPanel() {
     };
   }, []);
 
+  // 切换到私聊视图时清除未读计数
+  useEffect(() => {
+    if (viewMode === 'direct' && clearUnreadDirectCount) {
+      clearUnreadDirectCount();
+    }
+  }, [viewMode, clearUnreadDirectCount]);
+
   // 根据viewMode过滤消息
   const displayMessages = viewMode === 'storyMachine' 
     ? (storyMachineMessages || [])
+    : viewMode === 'direct'
+    ? (directMessages || []).sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return timeA - timeB;
+      })
     : (messages || []).filter(m => {
-        // 全局视图：显示所有全局可见的消息
+        // 全局视图：显示所有全局可见的消息，但不包括玩家间私聊
         return m.type === 'global' || 
                m.type === 'chapter' || 
                m.type === 'ai' || 
                m.type === 'system' ||
-               m.type === 'player_to_player' ||
                m.type === 'player' ||
                (m.visibility === 'global' && 
                 m.type !== 'private' && 
                 m.type !== 'story_machine' &&
+                m.type !== 'player_to_player' &&
                 m.senderId !== 'ai');
       }).sort((a, b) => {
         // 按时间戳排序，确保消息按时间顺序显示
@@ -306,6 +341,26 @@ export default function StoryPanel() {
             </button>
             <button
               onClick={() => {
+                setViewMode('direct');
+                window.dispatchEvent(new CustomEvent('switchMessageType', {
+                  detail: { messageType: 'player_to_player' }
+                }));
+              }}
+              className={`px-3 py-1 text-xs font-bold border-2 transition-all relative ${
+                viewMode === 'direct'
+                  ? 'bg-pixel-accent-yellow text-pixel-wood-dark border-white shadow-pixel-sm'
+                  : 'bg-pixel-wood-light text-pixel-wood-dark border-pixel-wood-dark hover:brightness-110'
+              }`}
+            >
+              🔒 玩家私聊
+              {unreadDirectCount > 0 && viewMode !== 'direct' && (
+                <span className="absolute -top-2 -right-2 bg-pixel-accent-red text-white text-xs w-5 h-5 rounded-full flex items-center justify-center animate-pulse">
+                  {unreadDirectCount > 9 ? '9+' : unreadDirectCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => {
                 setViewMode('storyMachine');
                 window.dispatchEvent(new CustomEvent('switchMessageType', {
                   detail: { messageType: 'private' }
@@ -328,7 +383,54 @@ export default function StoryPanel() {
             🤖 私密对话模式：获取独属于你的信息和反馈
           </div>
         )}
+        {viewMode === 'direct' && (
+          <div className="mt-2 text-xs text-pixel-accent-yellow font-bold">
+            🔒 玩家私聊模式：与其他玩家进行秘密交流（在玩家列表中点击玩家选择私聊对象）
+          </div>
+        )}
       </div>
+      
+      {/* 谜题进度条 - 显示在标题栏下方 */}
+      {currentPuzzle && viewMode !== 'direct' && (
+        <div className="flex-shrink-0 mx-4 mt-2 p-3 bg-gradient-to-r from-purple-100 to-indigo-100 border-2 border-purple-300 rounded-lg">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🔮</span>
+              <span className="text-sm font-bold text-purple-800">本章谜题</span>
+              {puzzleProgress.solvedCount > 0 && (
+                <span className="text-xs bg-green-200 text-green-800 px-2 py-0.5 rounded-full">
+                  {puzzleProgress.solvedCount}/{puzzleProgress.totalPlayers || room?.players?.length || '?'} 已解开
+                </span>
+              )}
+            </div>
+          </div>
+          <p className="text-sm text-purple-900 font-medium">{currentPuzzle.question}</p>
+          
+          {/* 解谜进度 */}
+          {puzzleProgress.solvedPlayers && puzzleProgress.solvedPlayers.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {puzzleProgress.solvedPlayers.map(p => (
+                <span key={p.playerId} className="text-xs bg-green-200 text-green-700 px-2 py-0.5 rounded">
+                  ✓ {p.playerName}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      
+      {/* 解谜成功全局通知 */}
+      {puzzleSolvedNotification && (
+        <div className="fixed top-1/3 left-1/2 transform -translate-x-1/2 z-50 
+          bg-gradient-to-r from-green-500 to-emerald-500 text-white px-8 py-4 rounded-lg 
+          shadow-2xl border-4 border-white animate-bounce">
+          <div className="text-center">
+            <div className="text-3xl mb-2">🎉</div>
+            <p className="text-lg font-bold">{puzzleSolvedNotification.message}</p>
+            <p className="text-sm mt-1">即将进入第 {puzzleSolvedNotification.nextChapterNumber} 章...</p>
+          </div>
+        </div>
+      )}
 
       {/* 故事背景 - 可折叠 */}
       {story.background && (
@@ -379,16 +481,31 @@ export default function StoryPanel() {
           </div>
         ) : (
           displayMessages.map((message) => (
-            <MessageItem key={message.id} message={message} viewMode={viewMode} />
+            <MessageItem 
+              key={message.id} 
+              message={message} 
+              viewMode={viewMode} 
+              storyCharacters={storyCharacters}
+              onCharacterClick={setSelectedCharacter}
+            />
           ))
         )}
         <div ref={messagesEndRef} />
       </div>
+      
+      {/* 角色卡片弹窗 */}
+      {selectedCharacter && (
+        <CharacterCard 
+          characterId={selectedCharacter.id}
+          characterName={selectedCharacter.name}
+          onClose={() => setSelectedCharacter(null)}
+        />
+      )}
     </div>
   );
 }
 
-function MessageItem({ message, viewMode = 'global' }) {
+function MessageItem({ message, viewMode = 'global', storyCharacters = [], onCharacterClick }) {
   const { player, room } = useGame();
   
   // 格式化时间戳
@@ -449,17 +566,78 @@ function MessageItem({ message, viewMode = 'global' }) {
     const isSender = message.senderId === player?.id;
     const isAI = message.sender === '故事机' || message.senderId === 'ai' || message.type === 'story_machine';
     
+    // 解析并渲染故事机消息内容（支持Markdown格式）
+    const renderStoryMachineContent = (content) => {
+      if (!content) return null;
+      
+      // 分割内容为段落
+      const lines = content.split('\n').filter(line => line.trim() !== '');
+      
+      return lines.map((line, index) => {
+        // 处理标题（**text**）
+        if (line.includes('**')) {
+          const parts = line.split(/\*\*(.*?)\*\*/g);
+          return (
+            <div key={index} className="mb-2">
+              {parts.map((part, i) => 
+                i % 2 === 1 
+                  ? <span key={i} className="font-bold text-pixel-accent-red">{part}</span>
+                  : <span key={i}>{part}</span>
+              )}
+            </div>
+          );
+        }
+        
+        // 处理引用（> text）
+        if (line.startsWith('>') || line.startsWith('> ')) {
+          const quoteContent = line.replace(/^>\s*/, '');
+          return (
+            <blockquote key={index} className="border-l-4 border-pixel-accent-yellow pl-3 my-2 py-1 bg-pixel-accent-yellow/10 italic text-pixel-wood-dark">
+              "{quoteContent}"
+            </blockquote>
+          );
+        }
+        
+        // 处理斜体（_text_）
+        if (line.includes('_')) {
+          const parts = line.split(/_(.*?)_/g);
+          return (
+            <div key={index} className="mb-1 text-sm text-pixel-text-muted italic">
+              {parts.map((part, i) => 
+                i % 2 === 1 
+                  ? <span key={i} className="text-pixel-wood-dark">{part}</span>
+                  : <span key={i}>{part}</span>
+              )}
+            </div>
+          );
+        }
+        
+        // 处理表情图标行
+        if (line.match(/^[🤖📖💡🔮💬🤝🎭✨]/)) {
+          return (
+            <div key={index} className="mb-2 flex items-start gap-2">
+              <span className="text-lg flex-shrink-0">{line.charAt(0)}</span>
+              <span className="text-sm">{line.substring(line.charAt(1) === ' ' ? 2 : 1)}</span>
+            </div>
+          );
+        }
+        
+        // 普通段落
+        return <p key={index} className="mb-2 text-sm leading-relaxed">{line}</p>;
+      });
+    };
+    
     return (
       <div className={`flex ${isSender ? 'justify-end' : isAI ? 'justify-start' : 'justify-start'}`}>
-        <div className={`max-w-[80%] p-3 border-2 shadow-pixel-sm ${
+        <div className={`max-w-[85%] p-4 border-2 shadow-pixel-sm rounded-lg ${
           isAI 
-            ? 'bg-pixel-accent-red/10 border-pixel-accent-red' 
+            ? 'bg-gradient-to-br from-purple-50 to-indigo-50 border-purple-300' 
             : 'bg-pixel-accent-red/20 border-pixel-accent-red'
         }`}>
-          <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-purple-200">
             <div className="flex items-center gap-2">
-              <span className="text-xs">🤖</span>
-              <div className="text-xs font-bold text-pixel-accent-red">
+              <span className="text-xl">🤖</span>
+              <div className="text-sm font-bold text-purple-700">
                 {isAI ? '故事机' : (message.sender || message.author)}
               </div>
               {!isAI && <span className="text-xs opacity-50">你</span>}
@@ -470,7 +648,9 @@ function MessageItem({ message, viewMode = 'global' }) {
               </div>
             )}
           </div>
-          <div className="text-sm">{message.content}</div>
+          <div className="story-machine-content">
+            {isAI ? renderStoryMachineContent(message.content) : <div className="text-sm">{message.content}</div>}
+          </div>
         </div>
       </div>
     );
@@ -517,7 +697,6 @@ function MessageItem({ message, viewMode = 'global' }) {
       const npcPattern = /\[NPC:([^\]]+)\]|@NPC:([^\s，。！？,\.!?]+)/g;
       const npcMatches = [];
       let npcMatch;
-      let lastIndex = 0;
       
       // 收集所有NPC标记
       while ((npcMatch = npcPattern.exec(content)) !== null) {
@@ -529,28 +708,38 @@ function MessageItem({ message, viewMode = 'global' }) {
         });
       }
       
-      // 如果没有NPC标记，尝试识别可能的NPC名称（不在玩家列表中的名称）
-      // 使用简单的启发式方法：识别引号中的名称、特定上下文中的名称等
-      const potentialNpcPattern = /["""]([^"""]{2,10})["""]|「([^」]{2,10})」|《([^》]{2,10})》/g;
-      const potentialNpcs = [];
-      let potentialMatch;
+      // 只有当有已知角色列表时，才尝试匹配角色名称
+      // 不再使用引号内容的启发式匹配，避免误识别
+      const knownCharacterNames = storyCharacters
+        .filter(c => c.name && c.name.length >= 2 && c.name.length <= 10)
+        .map(c => c.name);
       
-      while ((potentialMatch = potentialNpcPattern.exec(content)) !== null) {
-        const name = potentialMatch[1] || potentialMatch[2] || potentialMatch[3];
-        // 如果不在玩家列表中，且不是常见词汇，可能是NPC
-        if (name && !playerNames.some(p => p.toLowerCase() === name.toLowerCase()) && 
-            name.length >= 2 && name.length <= 10) {
-          potentialNpcs.push({
-            start: potentialMatch.index,
-            end: potentialMatch.index + potentialMatch[0].length,
-            name: name,
-            fullMatch: potentialMatch[0]
-          });
+      // 在文本中查找已知角色名称
+      const characterMatches = [];
+      if (knownCharacterNames.length > 0) {
+        const charPattern = new RegExp(
+          `(${knownCharacterNames.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+          'g'
+        );
+        let charMatch;
+        while ((charMatch = charPattern.exec(content)) !== null) {
+          // 检查这个位置是否已经被NPC标记覆盖
+          const isOverlapping = npcMatches.some(
+            npc => charMatch.index >= npc.start && charMatch.index < npc.end
+          );
+          if (!isOverlapping) {
+            characterMatches.push({
+              start: charMatch.index,
+              end: charMatch.index + charMatch[0].length,
+              name: charMatch[1],
+              fullMatch: charMatch[0]
+            });
+          }
         }
       }
       
-      // 合并NPC标记和潜在NPC
-      const allNpcs = [...npcMatches, ...potentialNpcs].sort((a, b) => a.start - b.start);
+      // 合并NPC标记和已知角色匹配
+      const allNpcs = [...npcMatches, ...characterMatches].sort((a, b) => a.start - b.start);
       
       // 处理玩家名称
       const playerPattern = playerNames.length > 0 
@@ -596,10 +785,40 @@ function MessageItem({ message, viewMode = 'global' }) {
       // 渲染每个片段
       return parts.map((part, partIndex) => {
         if (part.type === 'npc') {
-          // NPC高亮显示（橙色/黄色）
+          // 获取清理后的NPC名称
+          const displayName = part.fullMatch ? part.fullMatch.replace(/\[NPC:|@NPC:|["""]|「|《/g, '').replace(/\]|」|》/g, '') : part.content;
+          
+          // 查找是否有对应的角色信息
+          const character = storyCharacters.find(c => 
+            c.name === displayName || 
+            c.name === part.content ||
+            c.name.includes(displayName) ||
+            displayName.includes(c.name)
+          );
+          
+          // NPC高亮显示（橙色/黄色）- 可点击打开角色卡片
           return (
-            <span key={`npc-${partIndex}`} className="text-pixel-accent-yellow font-bold drop-shadow-sm">
-              {part.fullMatch ? part.fullMatch.replace(/\[NPC:|@NPC:|["""]|「|《/g, '').replace(/\]|」|》/g, '') : part.content}
+            <span 
+              key={`npc-${partIndex}`} 
+              className="text-pixel-accent-yellow font-bold drop-shadow-sm cursor-pointer hover:bg-yellow-200/50 px-0.5 rounded transition-colors underline decoration-dotted underline-offset-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onCharacterClick) {
+                  if (character) {
+                    onCharacterClick(character);
+                  } else {
+                    // 如果没有找到角色，尝试用名称创建一个临时对象
+                    onCharacterClick({ 
+                      name: displayName, 
+                      character_type: 'npc',
+                      id: `temp-${displayName}`
+                    });
+                  }
+                }
+              }}
+              title="点击查看角色详情"
+            >
+              {displayName}
             </span>
           );
         }
@@ -610,8 +829,33 @@ function MessageItem({ message, viewMode = 'global' }) {
           return textParts.map((textPart, textIndex) => {
             const isPlayerName = playerNames.some(name => name.toLowerCase() === textPart.toLowerCase());
             if (isPlayerName) {
+              // 查找是否有对应的角色信息
+              const character = storyCharacters.find(c => 
+                c.name === textPart ||
+                c.player_id === (room?.players?.find(p => p.username === textPart)?.id)
+              );
+              
               return (
-                <span key={`player-${partIndex}-${textIndex}`} className="text-pixel-accent-blue font-bold drop-shadow-sm">
+                <span 
+                  key={`player-${partIndex}-${textIndex}`} 
+                  className="text-pixel-accent-blue font-bold drop-shadow-sm cursor-pointer hover:bg-blue-200/50 px-0.5 rounded transition-colors underline decoration-dotted underline-offset-2"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (onCharacterClick) {
+                      if (character) {
+                        onCharacterClick(character);
+                      } else {
+                        // 创建临时角色对象
+                        onCharacterClick({ 
+                          name: textPart, 
+                          character_type: 'player',
+                          id: `temp-player-${textPart}`
+                        });
+                      }
+                    }
+                  }}
+                  title="点击查看角色详情"
+                >
                   @{textPart}
                 </span>
               );

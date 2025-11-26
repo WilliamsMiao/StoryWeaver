@@ -471,6 +471,435 @@ ${chapterContent}
       confidence
     };
   }
+
+  /**
+   * 生成章节谜题和玩家专属线索
+   * @param {string} chapterContent - 章节内容
+   * @param {Object} storyContext - 故事上下文
+   * @param {Array} players - 玩家列表 [{id, username, role}]
+   * @param {Object} options - 选项
+   * @returns {Promise<Object>} { puzzle, playerClues }
+   */
+  async generatePuzzleAndClues(chapterContent, storyContext, players, options = {}) {
+    if (!this.provider) {
+      throw new Error('AI提供商未初始化');
+    }
+    await this.ensureProviderAvailability();
+
+    const playerCount = players.length;
+    const playerNames = players.map(p => p.username).join('、');
+
+    const systemPrompt = `你是一个剧本杀游戏设计师。请根据章节内容设计：
+1. 一个核心谜题（所有玩家需要合作解决）
+2. 为每个玩家分配独特的线索（每人2-3条）
+
+## 设计原则：
+- 核心谜题必须需要多人信息整合才能解决
+- 每个玩家的线索都是解谜的一部分，但单独无法得出答案
+- 线索之间要有关联性，鼓励玩家互相交流
+- 有些线索可以是误导性的，增加推理难度
+- 谜题答案必须明确，能够验证对错
+
+## 线索类型：
+- 目击证词：玩家"看到"或"听到"的信息
+- 物证发现：玩家"发现"的物品或痕迹
+- 背景信息：玩家因角色背景而知道的信息
+- 人物关系：玩家与其他角色/NPC的特殊关系
+
+## 当前玩家列表：
+${players.map((p, i) => `${i+1}. ${p.username}（ID: ${p.id}）`).join('\n')}
+
+## 返回格式（严格JSON）：
+{
+  "puzzle": {
+    "question": "核心谜题问题（让玩家思考和推理的问题）",
+    "correct_answer": "正确答案（简洁明确）",
+    "answer_keywords": "关键词1|关键词2|关键词3（用于判断答案是否正确）",
+    "difficulty": 3,
+    "hints": ["提示1", "提示2", "提示3"]
+  },
+  "playerClues": {
+    "玩家ID": [
+      {
+        "type": "目击证词",
+        "content": "线索内容（玩家独有的信息）",
+        "source": "线索来源（如：你在花园散步时...）",
+        "relevance": "与谜题的关联说明（内部使用，不告诉玩家）",
+        "canShare": true
+      }
+    ]
+  }
+}`;
+
+    const userPrompt = `故事背景：${storyContext.title || '未命名'}
+${storyContext.background || ''}
+
+当前章节内容：
+${chapterContent}
+
+请为这${playerCount}个玩家设计谜题和线索。确保：
+1. 每个玩家得到2-3条独特线索
+2. 线索内容不能重复
+3. 必须整合所有人的线索才能解开谜题
+4. 返回严格的JSON格式`;
+
+    try {
+      const response = await this.requestQueue.enqueue(
+        () => this.provider.callAPI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ], {
+          temperature: 0.7,
+          max_tokens: 1500
+        }),
+        {
+          priority: options.priority || 2,
+          timeout: options.timeout || 30000
+        }
+      );
+
+      // 解析AI返回的JSON
+      let result = { puzzle: null, playerClues: {} };
+      try {
+        const content = response.content || response.text || '';
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          result = JSON.parse(jsonMatch[0]);
+        }
+      } catch (parseError) {
+        console.error('解析谜题和线索失败，使用默认生成:', parseError);
+        result = this.generateDefaultPuzzleAndClues(players, storyContext);
+      }
+
+      // 确保每个玩家都有线索
+      for (const player of players) {
+        if (!result.playerClues[player.id]) {
+          result.playerClues[player.id] = this.generateDefaultCluesForPlayer(player, storyContext);
+        }
+      }
+
+      return result;
+    } catch (error) {
+      console.error('生成谜题和线索失败:', error);
+      return this.generateDefaultPuzzleAndClues(players, storyContext);
+    }
+  }
+
+  /**
+   * 生成默认的谜题和线索（备用）
+   */
+  generateDefaultPuzzleAndClues(players, storyContext) {
+    const puzzle = {
+      question: '凶手是谁？他/她的作案动机是什么？',
+      correct_answer: '需要根据线索推理',
+      answer_keywords: '凶手|动机|真相',
+      difficulty: 3,
+      hints: ['注意时间线的矛盾', '有人在撒谎', '物证不会说谎']
+    };
+
+    const playerClues = {};
+    const clueTemplates = [
+      { type: '目击证词', content: '你在案发前看到有人匆忙离开现场', source: '你当时正好路过', relevance: '时间线线索', canShare: true },
+      { type: '物证发现', content: '你发现地上有一枚陌生的纽扣', source: '你仔细搜索了现场', relevance: '物证线索', canShare: true },
+      { type: '背景信息', content: '你知道受害者最近和某人有过激烈争吵', source: '你是知情者', relevance: '动机线索', canShare: true },
+      { type: '人物关系', content: '你和受害者有一段不为人知的过去', source: '这是你的秘密', relevance: '背景线索', canShare: false }
+    ];
+
+    players.forEach((player, index) => {
+      const clues = [];
+      for (let i = 0; i < 2; i++) {
+        const template = clueTemplates[(index * 2 + i) % clueTemplates.length];
+        clues.push({
+          ...template,
+          content: `${template.content}（${player.username}的专属线索）`
+        });
+      }
+      playerClues[player.id] = clues;
+    });
+
+    return { puzzle, playerClues };
+  }
+
+  /**
+   * 为单个玩家生成默认线索
+   */
+  generateDefaultCluesForPlayer(player, storyContext) {
+    return [
+      {
+        type: '背景信息',
+        content: `作为${player.username}，你知道一些别人不知道的事情...`,
+        source: '你的角色背景',
+        relevance: '需要与其他玩家交流来解读',
+        canShare: true
+      },
+      {
+        type: '目击证词',
+        content: '你隐约记得那天发生了一些奇怪的事...',
+        source: '你的记忆',
+        relevance: '可能是关键时间线的一部分',
+        canShare: true
+      }
+    ];
+  }
+
+  /**
+   * 为新加入的玩家生成专属线索
+   * @param {string} chapterContent - 章节内容
+   * @param {Object} storyContext - 故事上下文
+   * @param {Object} player - 玩家信息
+   * @param {Object} puzzle - 当前谜题
+   */
+  async generateCluesForSinglePlayer(chapterContent, storyContext, player, puzzle) {
+    if (!this.provider) {
+      return { clues: this.generateDefaultCluesForPlayer(player, storyContext) };
+    }
+    
+    try {
+      await this.ensureProviderAvailability();
+      
+      const systemPrompt = `你是一个剧本杀游戏设计师。一个新玩家刚刚加入了正在进行的游戏。
+请为这位新玩家生成2-3条独特的线索，这些线索应该：
+1. 与现有谜题相关联
+2. 与其他玩家的线索有互补性
+3. 能够帮助解谜，但单独无法得出答案
+
+当前谜题：${puzzle?.puzzle_question || '推理出事件真相'}
+
+返回JSON格式：
+{
+  "clues": [
+    {
+      "type": "线索类型（目击证词/物证发现/背景信息/人物关系）",
+      "content": "线索具体内容",
+      "source": "线索来源描述",
+      "relevance": "与谜题的关联",
+      "canShare": true
+    }
+  ]
+}`;
+
+      const userPrompt = `故事背景：${storyContext.title}
+${storyContext.background || ''}
+
+当前章节内容：
+${chapterContent.substring(0, 1000)}
+
+新加入的玩家：${player.username}
+
+请为这位新玩家生成独特的线索。`;
+
+      const response = await this.requestQueue.enqueue(
+        () => this.provider.callAPI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ], {
+          temperature: 0.7,
+          max_tokens: 500
+        }),
+        { priority: 2, timeout: 20000 }
+      );
+
+      const content = response.content || response.text || '';
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+    } catch (error) {
+      console.error('为新玩家生成线索失败:', error);
+    }
+    
+    return { clues: this.generateDefaultCluesForPlayer(player, storyContext) };
+  }
+
+  /**
+   * 验证玩家对谜题的回答
+   * @param {string} playerAnswer - 玩家回答
+   * @param {Object} puzzle - 谜题对象
+   * @returns {Object} { isCorrect, confidence, feedback }
+   */
+  async validatePuzzleAnswer(playerAnswer, puzzle) {
+    const keywords = (puzzle.answer_keywords || '').split('|').map(k => k.trim().toLowerCase());
+    const answerLower = playerAnswer.toLowerCase();
+    const correctAnswerLower = (puzzle.correct_answer || '').toLowerCase();
+    
+    // 检查关键词匹配
+    const matchedKeywords = keywords.filter(k => answerLower.includes(k));
+    const keywordMatch = matchedKeywords.length / Math.max(keywords.length, 1);
+    
+    // 检查是否包含正确答案的核心部分
+    const correctAnswerParts = correctAnswerLower.split(/[，。、\s]+/).filter(p => p.length > 1);
+    const answerMatch = correctAnswerParts.filter(p => answerLower.includes(p)).length / Math.max(correctAnswerParts.length, 1);
+    
+    const confidence = (keywordMatch * 0.6 + answerMatch * 0.4);
+    const isCorrect = confidence >= 0.5; // 50%匹配度视为正确
+
+    let feedback = '';
+    if (isCorrect) {
+      if (confidence >= 0.8) {
+        feedback = '🎉 完全正确！你成功解开了这个谜题！';
+      } else {
+        feedback = '✅ 基本正确！你的推理方向是对的！';
+      }
+    } else if (confidence >= 0.3) {
+      feedback = '🤔 接近了，但还差一点...再想想？';
+    } else {
+      feedback = '❌ 这个答案似乎偏离了方向，需要更多线索吗？';
+    }
+
+    return {
+      isCorrect,
+      confidence,
+      matchedKeywords,
+      feedback
+    };
+  }
+
+  /**
+   * 生成故事机的智能响应（完整版）
+   * 根据玩家状态、已揭示的线索、解谜进度生成个性化响应
+   * @param {Object} context - 完整上下文
+   * @param {string} playerInput - 玩家输入
+   * @param {string} playerId - 玩家ID
+   * @param {Object} playerState - 玩家状态 { clues, puzzleProgress, revealedClues }
+   * @returns {Promise<Object>} 响应结果
+   */
+  async generateSmartStoryMachineResponse(context, playerInput, playerId, playerState = {}) {
+    if (!this.provider) {
+      throw new Error('AI提供商未初始化');
+    }
+    await this.ensureProviderAvailability();
+
+    const startTime = Date.now();
+    const { clues = [], puzzleProgress = null, revealedClues = [], puzzle = null } = playerState;
+
+    // 分析玩家输入意图
+    const intent = this.analyzePlayerIntent(playerInput);
+
+    // 选择要揭示的下一条线索
+    const nextClue = clues.find(c => !revealedClues.includes(c.id));
+
+    let systemPrompt = `你是剧本杀游戏的"故事机"，一个神秘的知情者。
+
+## 你的角色：
+- 你知道所有真相，但不会直接说出
+- 你通过引导和暗示帮助玩家思考
+- 你根据玩家的进度逐步透露线索
+- 你保持神秘感，用隐晦的语言交流
+
+## 当前案件：
+- 案件名称：${context.title || '未命名案件'}
+- 案件背景：${context.background || '无'}
+
+## 这个玩家的状态：
+- 已获得线索数：${revealedClues.length}/${clues.length}
+- 解谜尝试次数：${puzzleProgress?.attempts || 0}
+${puzzle ? `- 当前谜题：${puzzle.question}` : ''}
+
+## 玩家的意图分析：
+${intent.type === 'ask_clue' ? '玩家想获取线索' : ''}
+${intent.type === 'answer_puzzle' ? '玩家在尝试解谜' : ''}
+${intent.type === 'ask_help' ? '玩家请求帮助' : ''}
+${intent.type === 'chat' ? '玩家在闲聊或探索' : ''}
+
+`;
+
+    // 根据意图添加具体指导
+    if (intent.type === 'ask_clue' && nextClue) {
+      systemPrompt += `
+## 你要透露的线索：
+- 类型：${nextClue.type}
+- 内容：${nextClue.content}
+- 来源：${nextClue.source}
+
+请用神秘的方式透露这条线索，不要直接说出，而是通过暗示让玩家意识到。
+比如：
+- "你有没有注意到...？"
+- "也许你应该回想一下..."
+- "有趣...在那个地方..."`;
+    } else if (intent.type === 'answer_puzzle' && puzzle) {
+      systemPrompt += `
+## 谜题验证：
+玩家的回答需要和正确答案对比：${puzzle.correct_answer}
+
+如果答案接近正确，给予肯定并引导完善。
+如果答案偏离，用提示引导而不是直接否定。`;
+    } else if (intent.type === 'ask_help') {
+      const hintIndex = Math.min(puzzleProgress?.hintsUsed || 0, (puzzle?.hints?.length || 1) - 1);
+      const hint = puzzle?.hints?.[hintIndex] || '仔细观察，真相就在细节中...';
+      systemPrompt += `
+## 给予提示：
+可以透露的提示：${hint}
+
+用委婉的方式给出提示，保持神秘感。`;
+    }
+
+    systemPrompt += `
+
+## 回应风格：
+- 神秘而富有暗示性
+- 回复控制在80-150字
+- 结尾可以抛出问题引导思考
+- 使用 "..." 增加神秘感`;
+
+    const userPrompt = `玩家说：${playerInput}
+
+请生成故事机的回复。`;
+
+    try {
+      const response = await this.requestQueue.enqueue(
+        () => this.provider.callAPI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ], {
+          temperature: 0.7,
+          max_tokens: 300
+        }),
+        {
+          priority: 1,
+          timeout: 20000
+        }
+      );
+
+      const duration = Date.now() - startTime;
+      const result = this.standardizeResponse(response, { duration, success: true });
+
+      // 附加额外信息
+      result.intent = intent;
+      result.revealedClue = intent.type === 'ask_clue' ? nextClue : null;
+      result.shouldRevealClue = intent.type === 'ask_clue' && nextClue;
+
+      return result;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      throw this.standardizeError(error, duration);
+    }
+  }
+
+  /**
+   * 分析玩家输入的意图
+   */
+  analyzePlayerIntent(input) {
+    const lowerInput = input.toLowerCase();
+    
+    // 询问线索的关键词
+    const clueKeywords = ['线索', '证据', '发现', '看到', '听到', '告诉我', '有什么', '知道什么', '信息'];
+    // 尝试解谜的关键词
+    const puzzleKeywords = ['凶手是', '答案是', '我认为', '我猜', '真相是', '是因为', '动机是'];
+    // 请求帮助的关键词
+    const helpKeywords = ['帮助', '提示', '不知道', '想不出', '没头绪', '给点提示', '怎么办'];
+
+    if (clueKeywords.some(k => lowerInput.includes(k))) {
+      return { type: 'ask_clue', confidence: 0.8 };
+    }
+    if (puzzleKeywords.some(k => lowerInput.includes(k))) {
+      return { type: 'answer_puzzle', confidence: 0.8 };
+    }
+    if (helpKeywords.some(k => lowerInput.includes(k))) {
+      return { type: 'ask_help', confidence: 0.8 };
+    }
+    
+    return { type: 'chat', confidence: 0.5 };
+  }
   
   /**
    * 总结章节
@@ -693,6 +1122,387 @@ ${chapterContent}
    */
   clearQueue() {
     this.requestQueue.clear();
+  }
+
+  // ==================== 角色和线索卡片生成 ====================
+
+  /**
+   * 生成增强版故事章节（包含角色标记、玩家融入、线索卡片）
+   * @param {Object} context - 故事上下文
+   * @param {string} playerInput - 触发内容或章节类型
+   * @param {Array} players - 玩家列表
+   * @param {Array} interactions - 玩家互动记录
+   * @param {Array} existingCharacters - 已有角色列表
+   * @returns {Promise<Object>} { content, characters, clueCards, playerRoles }
+   */
+  async generateEnhancedChapter(context, playerInput, players = [], interactions = [], existingCharacters = [], options = {}) {
+    if (!this.provider) {
+      throw new Error('AI提供商未初始化');
+    }
+    await this.ensureProviderAvailability();
+
+    const startTime = Date.now();
+    const playerNames = players.map(p => p.username).join('、');
+    const playerDescriptions = players.map(p => `${p.username}（玩家ID: ${p.id}）`).join('\n');
+    
+    // 构建互动摘要
+    const interactionSummary = this.buildInteractionSummary(interactions, players);
+    
+    // 已有角色信息
+    const existingCharacterInfo = existingCharacters.length > 0 
+      ? existingCharacters.map(c => `- ${c.name}（${c.character_type}）: ${c.occupation || '未知职业'}`).join('\n')
+      : '暂无已登场角色';
+
+    const systemPrompt = `你是一个顶尖的剧本杀游戏编剧。你需要创作沉浸式的互动故事章节。
+
+## 核心要求：
+1. **角色标记**：所有NPC必须用 [NPC:名称] 格式标记，所有玩家用 [玩家:名称] 格式标记
+2. **玩家融入**：将所有玩家自然地写入剧情，给他们安排具体的行动、对话或发现
+3. **线索设计**：为每个登场角色设计可发现的线索卡片
+
+## 当前玩家列表：
+${playerDescriptions}
+
+## 玩家互动记录（请参考并融入剧情）：
+${interactionSummary || '暂无互动记录'}
+
+## 已登场角色：
+${existingCharacterInfo}
+
+## 故事背景：
+标题：${context.title || '未命名'}
+背景：${context.background || '无'}
+当前章节：第${context.currentChapter || 1}章
+
+## 输出格式（严格JSON）：
+{
+  "chapterContent": "章节正文内容（300-500字，使用[NPC:名称]和[玩家:名称]标记）",
+  "newCharacters": [
+    {
+      "name": "角色名",
+      "type": "npc",
+      "age": "年龄",
+      "occupation": "职业",
+      "personality": "性格特点",
+      "background": "背景故事（50字内）",
+      "secret": "隐藏秘密（重要线索）",
+      "isSuspect": true/false,
+      "suspicionLevel": 0-10
+    }
+  ],
+  "playerRoles": [
+    {
+      "playerId": "玩家ID",
+      "roleInChapter": "本章角色定位",
+      "actionDescription": "玩家在本章的行动描述",
+      "discoveredInfo": "玩家可能发现的信息"
+    }
+  ],
+  "clueCards": [
+    {
+      "characterName": "关联角色名",
+      "category": "行为线索/物证/证词/关系/背景",
+      "title": "线索标题",
+      "content": "线索内容（30字内）",
+      "importance": 1-5,
+      "isHidden": false
+    }
+  ]
+}`;
+
+    const userPrompt = `请为这个故事创作第${context.currentChapter || 1}章。
+
+${playerInput || '故事继续发展...'}
+
+要求：
+1. 每个玩家（${playerNames}）都必须在剧情中有具体的戏份
+2. 至少出现1-2个NPC角色（可以是新角色或已有角色）
+3. 为每个登场角色设计1-2条线索卡片
+4. 章节结尾留下悬念`;
+    
+    try {
+      const response = await this.requestQueue.enqueue(
+        () => this.provider.callAPI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ], {
+          temperature: 0.8,
+          max_tokens: 2000
+        }),
+        {
+          priority: options.priority || 0,
+          timeout: options.timeout || 45000
+        }
+      );
+
+      const duration = Date.now() - startTime;
+      const content = response.content || response.text || '';
+      
+      // 解析JSON结果
+      let result;
+      try {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          result = JSON.parse(jsonMatch[0]);
+        } else {
+          // 如果没有JSON，尝试将内容作为纯文本章节处理
+          result = this.generateDefaultChapterStructure(content, players);
+        }
+      } catch (parseError) {
+        console.error('解析增强章节失败:', parseError);
+        result = this.generateDefaultChapterStructure(content, players);
+      }
+
+      return {
+        ...result,
+        model: this.provider.name,
+        duration,
+        success: true
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      throw this.standardizeError(error, duration);
+    }
+  }
+
+  /**
+   * 生成默认章节结构（当AI返回格式不正确时）
+   */
+  generateDefaultChapterStructure(content, players) {
+    return {
+      chapterContent: content || '故事继续发展...',
+      newCharacters: [],
+      playerRoles: players.map(p => ({
+        playerId: p.id,
+        roleInChapter: '调查者',
+        actionDescription: `${p.username}继续调查案件`,
+        discoveredInfo: null
+      })),
+      clueCards: []
+    };
+  }
+
+  /**
+   * 构建玩家互动摘要
+   */
+  buildInteractionSummary(interactions, players) {
+    if (!interactions || interactions.length === 0) {
+      return null;
+    }
+
+    const playerMap = new Map(players.map(p => [p.id, p.username]));
+    const summary = interactions.map(i => {
+      const playerName = playerMap.get(i.player_id) || i.player_name || '未知玩家';
+      return `- ${playerName} ${i.interaction_type}: ${i.action_description || i.target_character || '进行了互动'}`;
+    }).join('\n');
+
+    return summary;
+  }
+
+  /**
+   * 为单个角色生成详细线索卡片
+   * @param {Object} character - 角色信息
+   * @param {Object} storyContext - 故事上下文
+   * @param {number} chapterNumber - 章节号
+   */
+  async generateCharacterClueCards(character, storyContext, chapterNumber, options = {}) {
+    if (!this.provider) {
+      throw new Error('AI提供商未初始化');
+    }
+    await this.ensureProviderAvailability();
+
+    const systemPrompt = `你是剧本杀线索设计师。为给定角色生成线索卡片。
+
+## 角色信息：
+- 姓名：${character.name}
+- 类型：${character.character_type || 'npc'}
+- 职业：${character.occupation || '未知'}
+- 性格：${character.personality || '未知'}
+- 背景：${character.background || '未知'}
+- 秘密：${character.secret || '未知'}
+
+## 故事背景：
+${storyContext.title || '未命名'}
+${storyContext.background || ''}
+
+## 线索类别说明：
+- 行为线索：角色的可疑行为或习惯
+- 物证：与角色相关的物品或痕迹
+- 证词：角色说过的话或他人对其的评价
+- 关系：与其他角色的关系
+- 背景：角色的过往或身份信息
+
+## 返回格式（JSON数组）：
+[
+  {
+    "category": "线索类别",
+    "title": "线索标题（6字内）",
+    "content": "线索内容（50字内）",
+    "importance": 1-5,
+    "isHidden": false,
+    "discoveryCondition": "发现条件（可选）"
+  }
+]`;
+
+    const userPrompt = `请为 ${character.name} 生成3-5条线索卡片，当前是第${chapterNumber}章。
+
+线索应该：
+1. 有助于推理案件真相
+2. 部分线索可能是误导性的
+3. 重要线索可设为隐藏，需要特定条件才能发现`;
+
+    try {
+      const response = await this.requestQueue.enqueue(
+        () => this.provider.callAPI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ], {
+          temperature: 0.7,
+          max_tokens: 800
+        }),
+        {
+          priority: options.priority || 1,
+          timeout: options.timeout || 20000
+        }
+      );
+
+      const content = response.content || response.text || '';
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      return this.generateDefaultClueCards(character);
+    } catch (error) {
+      console.error('生成角色线索卡片失败:', error);
+      return this.generateDefaultClueCards(character);
+    }
+  }
+
+  /**
+   * 生成默认线索卡片
+   */
+  generateDefaultClueCards(character) {
+    return [
+      {
+        category: '行为线索',
+        title: '可疑行为',
+        content: `${character.name}在案发时间段行踪可疑`,
+        importance: 2,
+        isHidden: false
+      },
+      {
+        category: '背景',
+        title: '身份信息',
+        content: `${character.name}，${character.occupation || '职业不明'}`,
+        importance: 1,
+        isHidden: false
+      }
+    ];
+  }
+
+  /**
+   * 为玩家生成角色设定
+   * @param {Array} players - 玩家列表
+   * @param {Object} storyContext - 故事上下文
+   */
+  async generatePlayerRoles(players, storyContext, options = {}) {
+    if (!this.provider) {
+      throw new Error('AI提供商未初始化');
+    }
+    await this.ensureProviderAvailability();
+
+    const playerNames = players.map(p => p.username).join('、');
+
+    const systemPrompt = `你是剧本杀游戏设计师。为每个玩家分配独特的侦探角色。
+
+## 故事背景：
+${storyContext.title || '未命名'}
+${storyContext.background || ''}
+
+## 玩家列表：
+${players.map((p, i) => `${i + 1}. ${p.username}`).join('\n')}
+
+## 角色类型：
+- detective: 专业侦探
+- journalist: 记者
+- relative: 受害者亲属  
+- witness: 目击者
+- expert: 专家顾问
+
+## 返回格式（JSON数组）：
+[
+  {
+    "playerId": "玩家ID",
+    "playerName": "玩家名",
+    "roleType": "角色类型",
+    "characterName": "角色全名",
+    "occupation": "职业",
+    "personality": "性格",
+    "specialAbility": "特殊能力（如：擅长观察细节）",
+    "personalGoal": "个人目标",
+    "secretInfo": "只有该玩家知道的秘密信息"
+  }
+]`;
+
+    const userPrompt = `请为这${players.length}个玩家分配角色：${playerNames}
+
+要求：
+1. 每个角色都有独特的背景和能力
+2. 角色之间应该有一定的互补性
+3. 每个人都有专属的秘密信息`;
+
+    try {
+      const response = await this.requestQueue.enqueue(
+        () => this.provider.callAPI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ], {
+          temperature: 0.8,
+          max_tokens: 1000
+        }),
+        {
+          priority: options.priority || 0,
+          timeout: options.timeout || 25000
+        }
+      );
+
+      const content = response.content || response.text || '';
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const roles = JSON.parse(jsonMatch[0]);
+        // 确保每个玩家都有角色
+        return players.map((p, i) => {
+          const role = roles.find(r => r.playerId === p.id || r.playerName === p.username) || roles[i];
+          return {
+            ...role,
+            playerId: p.id,
+            playerName: p.username
+          };
+        });
+      }
+      return this.generateDefaultPlayerRoles(players);
+    } catch (error) {
+      console.error('生成玩家角色失败:', error);
+      return this.generateDefaultPlayerRoles(players);
+    }
+  }
+
+  /**
+   * 生成默认玩家角色
+   */
+  generateDefaultPlayerRoles(players) {
+    const roleTypes = ['detective', 'journalist', 'witness', 'expert', 'relative'];
+    return players.map((p, i) => ({
+      playerId: p.id,
+      playerName: p.username,
+      roleType: roleTypes[i % roleTypes.length],
+      characterName: `${p.username}侦探`,
+      occupation: '调查员',
+      personality: '机敏',
+      specialAbility: '善于观察',
+      personalGoal: '找出真相',
+      secretInfo: '你对这个案件有一些自己的怀疑...'
+    }));
   }
 }
 

@@ -195,17 +195,17 @@ export default function InputPanel() {
             onClick={() => {
               setMessageType('player_to_player');
               window.dispatchEvent(new CustomEvent('switchViewMode', {
-                detail: { viewMode: 'global' }
+                detail: { viewMode: 'direct' }
               }));
             }}
             className={`px-2 py-1 text-xs font-bold border-2 transition-all ${
               messageType === 'player_to_player'
-                ? 'bg-pixel-accent-green text-white border-white'
+                ? 'bg-pixel-accent-yellow text-pixel-wood-dark border-white'
                 : 'bg-pixel-wood-light text-pixel-wood-dark border-pixel-wood-dark hover:brightness-110'
             }`}
             title="私聊：选择玩家私聊"
           >
-            🤝
+            🔒
           </button>
         </div>
 
@@ -215,12 +215,12 @@ export default function InputPanel() {
           {messageType === 'player_to_player' && (
             <div className={`mb-1 px-2 py-1 text-xs font-bold rounded ${
               recipientName 
-                ? 'bg-pixel-accent-green/20 text-pixel-accent-green' 
+                ? 'bg-pixel-accent-yellow/20 text-pixel-wood-dark' 
                 : 'bg-pixel-wood-dark/20 text-pixel-wood-dark'
             }`}>
               {recipientName ? (
                 <span>
-                  私聊 → {recipientName}
+                  🔒 私聊 → {recipientName}
                   <button type="button" onClick={() => { setRecipientId(null); setRecipientName(null); }} className="ml-1 opacity-70 hover:opacity-100">✕</button>
                 </span>
               ) : (

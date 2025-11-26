@@ -238,6 +238,61 @@ class Database {
       )
     `);
     
+    // 章节谜题表 - 每个章节的核心谜题
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS chapter_puzzles (
+        id TEXT PRIMARY KEY,
+        chapter_id TEXT NOT NULL,
+        story_id TEXT NOT NULL,
+        puzzle_question TEXT NOT NULL,
+        correct_answer TEXT NOT NULL,
+        answer_keywords TEXT,
+        difficulty INTEGER DEFAULT 3,
+        solved INTEGER DEFAULT 0,
+        solved_by TEXT,
+        solved_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id),
+        FOREIGN KEY (story_id) REFERENCES stories(id)
+      )
+    `);
+    
+    // 玩家专属线索表 - 每个玩家获得的独特线索
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS player_clues (
+        id TEXT PRIMARY KEY,
+        chapter_id TEXT NOT NULL,
+        player_id TEXT NOT NULL,
+        clue_type TEXT NOT NULL,
+        clue_content TEXT NOT NULL,
+        clue_source TEXT,
+        is_revealed INTEGER DEFAULT 0,
+        revealed_at DATETIME,
+        relevance_to_puzzle TEXT,
+        can_share INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id),
+        FOREIGN KEY (player_id) REFERENCES players(id)
+      )
+    `);
+    
+    // 玩家解谜进度表 - 记录每个玩家的解谜状态
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS player_puzzle_progress (
+        id TEXT PRIMARY KEY,
+        puzzle_id TEXT NOT NULL,
+        player_id TEXT NOT NULL,
+        attempts INTEGER DEFAULT 0,
+        is_solved INTEGER DEFAULT 0,
+        last_answer TEXT,
+        solved_at DATETIME,
+        hints_used INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (puzzle_id) REFERENCES chapter_puzzles(id),
+        FOREIGN KEY (player_id) REFERENCES players(id)
+      )
+    `);
+    
     // 玩家反馈进度表
     await this.db.run(`
       CREATE TABLE IF NOT EXISTS player_feedback_progress (
@@ -255,14 +310,107 @@ class Database {
       )
     `);
     
+    // 故事角色表 - 存储NPC和玩家角色信息
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS story_characters (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        character_type TEXT NOT NULL DEFAULT 'npc',
+        player_id TEXT,
+        avatar TEXT,
+        age TEXT,
+        occupation TEXT,
+        personality TEXT,
+        background TEXT,
+        secret TEXT,
+        relationships JSON,
+        first_appearance_chapter INTEGER DEFAULT 1,
+        is_alive INTEGER DEFAULT 1,
+        is_suspect INTEGER DEFAULT 0,
+        suspicion_level INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (story_id) REFERENCES stories(id),
+        FOREIGN KEY (player_id) REFERENCES players(id)
+      )
+    `);
+    
+    // 角色线索卡片表 - 每个角色在每章的线索信息
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS character_clue_cards (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        story_id TEXT NOT NULL,
+        clue_category TEXT NOT NULL,
+        clue_title TEXT NOT NULL,
+        clue_content TEXT NOT NULL,
+        clue_importance INTEGER DEFAULT 1,
+        is_hidden INTEGER DEFAULT 0,
+        discovered_by JSON DEFAULT '[]',
+        discovery_condition TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (character_id) REFERENCES story_characters(id),
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id),
+        FOREIGN KEY (story_id) REFERENCES stories(id)
+      )
+    `);
+    
+    // 玩家角色分配表 - 记录玩家在故事中扮演的角色
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS player_roles (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        player_id TEXT NOT NULL,
+        character_id TEXT NOT NULL,
+        role_type TEXT DEFAULT 'detective',
+        special_ability TEXT,
+        personal_goal TEXT,
+        secret_info TEXT,
+        discovered_clues JSON DEFAULT '[]',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (story_id) REFERENCES stories(id),
+        FOREIGN KEY (player_id) REFERENCES players(id),
+        FOREIGN KEY (character_id) REFERENCES story_characters(id)
+      )
+    `);
+    
+    // 玩家互动记录表 - 用于AI参考生成剧情
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS player_interactions (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        player_id TEXT NOT NULL,
+        interaction_type TEXT NOT NULL,
+        target_character TEXT,
+        action_description TEXT,
+        result TEXT,
+        impact_on_story TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (story_id) REFERENCES stories(id),
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id),
+        FOREIGN KEY (player_id) REFERENCES players(id)
+      )
+    `);
+    
     // 创建索引以提高查询性能
     await this.db.run(`CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id)`);
     await this.db.run(`CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id)`);
+    await this.db.run(`CREATE INDEX IF NOT EXISTS idx_player_clues_player ON player_clues(player_id)`);
+    await this.db.run(`CREATE INDEX IF NOT EXISTS idx_player_clues_chapter ON player_clues(chapter_id)`);
+    await this.db.run(`CREATE INDEX IF NOT EXISTS idx_chapter_puzzles_chapter ON chapter_puzzles(chapter_id)`);
     await this.db.run(`CREATE INDEX IF NOT EXISTS idx_messages_recipient_id ON messages(recipient_id)`);
     await this.db.run(`CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)`);
     await this.db.run(`CREATE INDEX IF NOT EXISTS idx_chapter_todos_chapter_id ON chapter_todos(chapter_id)`);
     await this.db.run(`CREATE INDEX IF NOT EXISTS idx_player_feedback_chapter_id ON player_feedback_progress(chapter_id)`);
     await this.db.run(`CREATE INDEX IF NOT EXISTS idx_player_feedback_player_id ON player_feedback_progress(player_id)`);
+    await this.db.run(`CREATE INDEX IF NOT EXISTS idx_story_characters_story ON story_characters(story_id)`);
+    await this.db.run(`CREATE INDEX IF NOT EXISTS idx_character_clue_cards_character ON character_clue_cards(character_id)`);
+    await this.db.run(`CREATE INDEX IF NOT EXISTS idx_character_clue_cards_chapter ON character_clue_cards(chapter_id)`);
+    await this.db.run(`CREATE INDEX IF NOT EXISTS idx_player_roles_story ON player_roles(story_id)`);
+    await this.db.run(`CREATE INDEX IF NOT EXISTS idx_player_interactions_story ON player_interactions(story_id)`);
     
     console.log('数据库表初始化完成');
   }
@@ -1108,6 +1256,497 @@ class Database {
          WHERE chapter_id = ? AND timeout_at IS NOT NULL AND timeout_at < ?
        )`,
       [chapterId, now]
+    );
+  }
+
+  // ==================== 章节谜题相关操作 ====================
+
+  /**
+   * 创建章节谜题
+   * @param {Object} puzzle - 谜题数据
+   */
+  async createChapterPuzzle(puzzle) {
+    const { id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty = 3 } = puzzle;
+    await this.db.run(
+      `INSERT INTO chapter_puzzles (id, chapter_id, story_id, puzzle_question, correct_answer, answer_keywords, difficulty)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty]
+    );
+  }
+
+  /**
+   * 获取章节谜题
+   * @param {string} chapterId - 章节ID
+   */
+  async getChapterPuzzle(chapterId) {
+    return await this.db.get(
+      'SELECT * FROM chapter_puzzles WHERE chapter_id = ?',
+      [chapterId]
+    );
+  }
+
+  /**
+   * 更新谜题解决状态
+   * @param {string} puzzleId - 谜题ID
+   * @param {string} solvedBy - 解决者玩家ID
+   */
+  async solvePuzzle(puzzleId, solvedBy) {
+    await this.db.run(
+      `UPDATE chapter_puzzles SET solved = 1, solved_by = ?, solved_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [solvedBy, puzzleId]
+    );
+  }
+
+  /**
+   * 检查玩家是否解开谜题
+   * @param {string} puzzleId - 谜题ID
+   * @param {string} playerId - 玩家ID
+   */
+  async getPlayerPuzzleProgress(puzzleId, playerId) {
+    return await this.db.get(
+      'SELECT * FROM player_puzzle_progress WHERE puzzle_id = ? AND player_id = ?',
+      [puzzleId, playerId]
+    );
+  }
+
+  /**
+   * 更新玩家解谜进度
+   * @param {Object} progress - 进度数据
+   */
+  async updatePlayerPuzzleProgress(progress) {
+    const { puzzleId, playerId, lastAnswer, isSolved, hintsUsed = 0 } = progress;
+    
+    const existing = await this.getPlayerPuzzleProgress(puzzleId, playerId);
+    
+    if (existing) {
+      await this.db.run(
+        `UPDATE player_puzzle_progress 
+         SET attempts = attempts + 1, last_answer = ?, is_solved = ?, hints_used = ?, solved_at = ?
+         WHERE puzzle_id = ? AND player_id = ?`,
+        [lastAnswer, isSolved ? 1 : 0, hintsUsed, isSolved ? new Date().toISOString() : null, puzzleId, playerId]
+      );
+    } else {
+      const { v4: uuidv4 } = await import('uuid');
+      await this.db.run(
+        `INSERT INTO player_puzzle_progress (id, puzzle_id, player_id, attempts, last_answer, is_solved, hints_used, solved_at)
+         VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+        [uuidv4(), puzzleId, playerId, lastAnswer, isSolved ? 1 : 0, hintsUsed, isSolved ? new Date().toISOString() : null]
+      );
+    }
+  }
+
+  /**
+   * 获取所有玩家的解谜状态
+   * @param {string} puzzleId - 谜题ID
+   * @param {string} roomId - 房间ID
+   */
+  async getAllPlayersPuzzleStatus(puzzleId, roomId) {
+    const players = await this.getRoomPlayers(roomId);
+    const results = await Promise.all(
+      players.map(async (player) => {
+        const progress = await this.getPlayerPuzzleProgress(puzzleId, player.id);
+        return {
+          playerId: player.id,
+          username: player.username,
+          isSolved: progress?.is_solved === 1,
+          attempts: progress?.attempts || 0
+        };
+      })
+    );
+    return results;
+  }
+
+  // ==================== 玩家线索相关操作 ====================
+
+  /**
+   * 创建玩家专属线索
+   * @param {Object} clue - 线索数据
+   */
+  async createPlayerClue(clue) {
+    const { id, chapterId, playerId, clueType, clueContent, clueSource, relevanceToPuzzle, canShare = 1 } = clue;
+    await this.db.run(
+      `INSERT INTO player_clues (id, chapter_id, player_id, clue_type, clue_content, clue_source, relevance_to_puzzle, can_share)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, chapterId, playerId, clueType, clueContent, clueSource || null, relevanceToPuzzle || null, canShare]
+    );
+  }
+
+  /**
+   * 获取玩家的所有线索
+   * @param {string} chapterId - 章节ID
+   * @param {string} playerId - 玩家ID
+   */
+  async getPlayerClues(chapterId, playerId) {
+    return await this.db.all(
+      'SELECT * FROM player_clues WHERE chapter_id = ? AND player_id = ? ORDER BY created_at ASC',
+      [chapterId, playerId]
+    );
+  }
+
+  /**
+   * 获取玩家已揭示的线索
+   * @param {string} chapterId - 章节ID
+   * @param {string} playerId - 玩家ID
+   */
+  async getRevealedClues(chapterId, playerId) {
+    return await this.db.all(
+      'SELECT * FROM player_clues WHERE chapter_id = ? AND player_id = ? AND is_revealed = 1 ORDER BY revealed_at ASC',
+      [chapterId, playerId]
+    );
+  }
+
+  /**
+   * 揭示玩家线索
+   * @param {string} clueId - 线索ID
+   */
+  async revealClue(clueId) {
+    await this.db.run(
+      'UPDATE player_clues SET is_revealed = 1, revealed_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [clueId]
+    );
+  }
+
+  /**
+   * 获取玩家未揭示的线索
+   * @param {string} chapterId - 章节ID
+   * @param {string} playerId - 玩家ID
+   */
+  async getUnrevealedClues(chapterId, playerId) {
+    return await this.db.all(
+      'SELECT * FROM player_clues WHERE chapter_id = ? AND player_id = ? AND is_revealed = 0 ORDER BY created_at ASC',
+      [chapterId, playerId]
+    );
+  }
+
+  /**
+   * 检查章节是否所有玩家都解开谜题
+   * @param {string} chapterId - 章节ID
+   * @param {string} roomId - 房间ID
+   */
+  async checkAllPlayersSolvedPuzzle(chapterId, roomId) {
+    const puzzle = await this.getChapterPuzzle(chapterId);
+    if (!puzzle) {
+      return { allSolved: false, reason: '没有谜题' };
+    }
+
+    const players = await this.getRoomPlayers(roomId);
+    const solvedPlayers = [];
+    const unsolvedPlayers = [];
+
+    for (const player of players) {
+      const progress = await this.getPlayerPuzzleProgress(puzzle.id, player.id);
+      if (progress?.is_solved === 1) {
+        solvedPlayers.push(player);
+      } else {
+        unsolvedPlayers.push(player);
+      }
+    }
+
+    return {
+      allSolved: unsolvedPlayers.length === 0,
+      solvedPlayers,
+      unsolvedPlayers,
+      puzzle
+    };
+  }
+
+  /**
+   * 获取所有玩家的谜题进度（用于广播）
+   * @param {string} chapterId - 章节ID
+   * @param {string} roomId - 房间ID
+   */
+  async getAllPlayerPuzzleProgress(chapterId, roomId) {
+    const puzzle = await this.getChapterPuzzle(chapterId);
+    if (!puzzle) {
+      return [];
+    }
+
+    const players = await this.getRoomPlayers(roomId);
+    const results = await Promise.all(
+      players.map(async (player) => {
+        const progress = await this.getPlayerPuzzleProgress(puzzle.id, player.id);
+        return {
+          player_id: player.id,
+          username: player.username,
+          is_solved: progress?.is_solved === 1,
+          attempts: progress?.attempts || 0,
+          hints_used: progress?.hints_used || 0
+        };
+      })
+    );
+    return results;
+  }
+
+  // ==================== 角色卡片相关操作 ====================
+
+  /**
+   * 创建故事角色（NPC或玩家角色）
+   */
+  async createCharacter(character) {
+    const { 
+      id, storyId, name, characterType = 'npc', playerId = null,
+      avatar, age, occupation, personality, background, secret,
+      relationships = {}, firstAppearanceChapter = 1, isSuspect = 0, suspicionLevel = 0
+    } = character;
+    
+    await this.db.run(
+      `INSERT INTO story_characters 
+       (id, story_id, name, character_type, player_id, avatar, age, occupation, 
+        personality, background, secret, relationships, first_appearance_chapter, 
+        is_suspect, suspicion_level)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, storyId, name, characterType, playerId, avatar, age, occupation, 
+       personality, background, secret, JSON.stringify(relationships), 
+       firstAppearanceChapter, isSuspect, suspicionLevel]
+    );
+    
+    return { id, ...character };
+  }
+
+  /**
+   * 获取故事中的所有角色
+   */
+  async getStoryCharacters(storyId) {
+    const characters = await this.db.all(
+      'SELECT * FROM story_characters WHERE story_id = ? ORDER BY first_appearance_chapter ASC',
+      [storyId]
+    );
+    return characters.map(c => ({
+      ...c,
+      relationships: c.relationships ? JSON.parse(c.relationships) : {}
+    }));
+  }
+
+  /**
+   * 获取单个角色信息
+   */
+  async getCharacter(characterId) {
+    const character = await this.db.get(
+      'SELECT * FROM story_characters WHERE id = ?',
+      [characterId]
+    );
+    if (character) {
+      character.relationships = character.relationships ? JSON.parse(character.relationships) : {};
+    }
+    return character;
+  }
+
+  /**
+   * 根据名称查找角色
+   */
+  async findCharacterByName(storyId, name) {
+    return await this.db.get(
+      'SELECT * FROM story_characters WHERE story_id = ? AND name = ?',
+      [storyId, name]
+    );
+  }
+
+  /**
+   * 更新角色信息
+   */
+  async updateCharacter(characterId, updates) {
+    const fields = [];
+    const values = [];
+    
+    for (const [key, value] of Object.entries(updates)) {
+      const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+      fields.push(`${dbKey} = ?`);
+      values.push(typeof value === 'object' ? JSON.stringify(value) : value);
+    }
+    
+    fields.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(characterId);
+    
+    await this.db.run(
+      `UPDATE story_characters SET ${fields.join(', ')} WHERE id = ?`,
+      values
+    );
+  }
+
+  /**
+   * 创建角色线索卡片
+   */
+  async createCharacterClueCard(clueCard) {
+    const {
+      id, characterId, chapterId, storyId, clueCategory, clueTitle,
+      clueContent, clueImportance = 1, isHidden = 0, discoveryCondition = null
+    } = clueCard;
+    
+    await this.db.run(
+      `INSERT INTO character_clue_cards 
+       (id, character_id, chapter_id, story_id, clue_category, clue_title,
+        clue_content, clue_importance, is_hidden, discovery_condition)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, characterId, chapterId, storyId, clueCategory, clueTitle,
+       clueContent, clueImportance, isHidden, discoveryCondition]
+    );
+  }
+
+  /**
+   * 获取角色的所有线索卡片
+   */
+  async getCharacterClueCards(characterId, playerId = null) {
+    let query = `
+      SELECT * FROM character_clue_cards 
+      WHERE character_id = ?
+    `;
+    const params = [characterId];
+    
+    // 如果提供了playerId，过滤掉该玩家未发现的隐藏线索
+    if (playerId) {
+      query += ` AND (is_hidden = 0 OR discovered_by LIKE ?)`;
+      params.push(`%"${playerId}"%`);
+    } else {
+      query += ` AND is_hidden = 0`;
+    }
+    
+    query += ` ORDER BY clue_importance DESC, created_at ASC`;
+    
+    const cards = await this.db.all(query, params);
+    return cards.map(c => ({
+      ...c,
+      discovered_by: c.discovered_by ? JSON.parse(c.discovered_by) : []
+    }));
+  }
+
+  /**
+   * 获取章节中所有角色的线索卡片
+   */
+  async getChapterCharacterClues(chapterId) {
+    const clues = await this.db.all(
+      `SELECT cc.*, sc.name as character_name, sc.character_type
+       FROM character_clue_cards cc
+       JOIN story_characters sc ON cc.character_id = sc.id
+       WHERE cc.chapter_id = ?
+       ORDER BY sc.name, cc.clue_importance DESC`,
+      [chapterId]
+    );
+    return clues.map(c => ({
+      ...c,
+      discovered_by: c.discovered_by ? JSON.parse(c.discovered_by) : []
+    }));
+  }
+
+  /**
+   * 玩家发现线索
+   */
+  async discoverClue(clueCardId, playerId) {
+    const card = await this.db.get(
+      'SELECT discovered_by FROM character_clue_cards WHERE id = ?',
+      [clueCardId]
+    );
+    
+    if (card) {
+      const discoveredBy = card.discovered_by ? JSON.parse(card.discovered_by) : [];
+      if (!discoveredBy.includes(playerId)) {
+        discoveredBy.push(playerId);
+        await this.db.run(
+          'UPDATE character_clue_cards SET discovered_by = ? WHERE id = ?',
+          [JSON.stringify(discoveredBy), clueCardId]
+        );
+      }
+    }
+  }
+
+  // ==================== 玩家角色分配相关 ====================
+
+  /**
+   * 为玩家分配角色
+   */
+  async assignPlayerRole(assignment) {
+    const {
+      id, storyId, playerId, characterId, roleType = 'detective',
+      specialAbility = null, personalGoal = null, secretInfo = null
+    } = assignment;
+    
+    await this.db.run(
+      `INSERT OR REPLACE INTO player_roles 
+       (id, story_id, player_id, character_id, role_type, special_ability, personal_goal, secret_info)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, storyId, playerId, characterId, roleType, specialAbility, personalGoal, secretInfo]
+    );
+  }
+
+  /**
+   * 获取玩家在故事中的角色
+   */
+  async getPlayerRole(storyId, playerId) {
+    const role = await this.db.get(
+      `SELECT pr.*, sc.name as character_name, sc.avatar, sc.occupation, sc.personality
+       FROM player_roles pr
+       JOIN story_characters sc ON pr.character_id = sc.id
+       WHERE pr.story_id = ? AND pr.player_id = ?`,
+      [storyId, playerId]
+    );
+    if (role && role.discovered_clues) {
+      role.discovered_clues = JSON.parse(role.discovered_clues);
+    }
+    return role;
+  }
+
+  /**
+   * 更新玩家发现的线索
+   */
+  async updatePlayerDiscoveredClues(storyId, playerId, clueId) {
+    const role = await this.getPlayerRole(storyId, playerId);
+    if (role) {
+      const discoveredClues = role.discovered_clues || [];
+      if (!discoveredClues.includes(clueId)) {
+        discoveredClues.push(clueId);
+        await this.db.run(
+          'UPDATE player_roles SET discovered_clues = ? WHERE story_id = ? AND player_id = ?',
+          [JSON.stringify(discoveredClues), storyId, playerId]
+        );
+      }
+    }
+  }
+
+  // ==================== 玩家互动记录相关 ====================
+
+  /**
+   * 记录玩家互动
+   */
+  async recordPlayerInteraction(interaction) {
+    const {
+      id, storyId, chapterId, playerId, interactionType,
+      targetCharacter = null, actionDescription, result = null, impactOnStory = null
+    } = interaction;
+    
+    await this.db.run(
+      `INSERT INTO player_interactions 
+       (id, story_id, chapter_id, player_id, interaction_type, target_character, 
+        action_description, result, impact_on_story)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, storyId, chapterId, playerId, interactionType, targetCharacter,
+       actionDescription, result, impactOnStory]
+    );
+  }
+
+  /**
+   * 获取章节中的玩家互动记录
+   */
+  async getChapterInteractions(chapterId) {
+    return await this.db.all(
+      `SELECT pi.*, p.username as player_name
+       FROM player_interactions pi
+       LEFT JOIN players p ON pi.player_id = p.id
+       WHERE pi.chapter_id = ?
+       ORDER BY pi.created_at ASC`,
+      [chapterId]
+    );
+  }
+
+  /**
+   * 获取故事中的所有玩家互动摘要（用于AI生成剧情参考）
+   */
+  async getStoryInteractionsSummary(storyId) {
+    return await this.db.all(
+      `SELECT player_id, interaction_type, COUNT(*) as count,
+              GROUP_CONCAT(DISTINCT target_character) as targets
+       FROM player_interactions
+       WHERE story_id = ?
+       GROUP BY player_id, interaction_type`,
+      [storyId]
     );
   }
 }

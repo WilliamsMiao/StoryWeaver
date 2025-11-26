@@ -250,10 +250,90 @@ class StoryWeaverServer {
           
           socketLogger(socket, 'room_joined', { roomId, username });
           
-          callback({ success: true, room: room.toJSON() });
+          // 检查故事是否已经初始化
+          const roomData = room.toJSON();
+          
+          // 如果故事已存在，同步给新玩家
+          if (roomData.story && roomData.story.chapters && roomData.story.chapters.length > 0) {
+            console.log(`[新玩家加入] 玩家 ${username} 加入房间 ${roomId}，同步故事内容`);
+            
+            // 发送已有的章节内容
+            roomData.story.chapters.forEach((chapter, index) => {
+              socket.emit('new_chapter', {
+                chapter: chapter,
+                author: { id: 'system', username: '系统' },
+                room: roomData,
+                isSync: true // 标记这是同步消息
+              });
+            });
+            
+            // 为新玩家初始化故事机互动（获取当前章节的线索）
+            const currentChapter = roomData.story.chapters[roomData.story.chapters.length - 1];
+            if (currentChapter) {
+              try {
+                // 检查该玩家是否已有线索，如果没有则生成
+                const existingClues = await database.getPlayerClues(currentChapter.id, playerId);
+                
+                if (existingClues.length === 0) {
+                  console.log(`[新玩家加入] 为玩家 ${username} 生成专属线索`);
+                  
+                  // 为新玩家生成线索
+                  const newPlayerClues = await gameEngine.generateCluesForNewPlayer(
+                    roomId, 
+                    currentChapter.id, 
+                    { id: playerId, username }
+                  );
+                  
+                  if (newPlayerClues && newPlayerClues.storyMachineMessage) {
+                    socket.emit('story_machine_init', newPlayerClues.storyMachineMessage);
+                    console.log(`[新玩家加入] 已向玩家 ${username} 发送故事机初始消息`);
+                  }
+                } else {
+                  // 已有线索，发送已有的故事机消息
+                  const storyMachineMessages = await database.getMessages(roomId, playerId, {
+                    type: 'story_machine',
+                    limit: 20
+                  });
+                  
+                  storyMachineMessages.forEach(msg => {
+                    socket.emit('new_message', {
+                      id: msg.id,
+                      type: msg.message_type,
+                      visibility: msg.visibility,
+                      sender: msg.sender_name,
+                      senderId: msg.sender_id,
+                      recipientId: msg.recipient_id,
+                      recipientName: msg.recipient_name,
+                      content: msg.content,
+                      timestamp: new Date(msg.created_at),
+                      chapterNumber: msg.chapter_number,
+                      isPrivate: msg.visibility === 'private',
+                      isSync: true
+                    });
+                  });
+                }
+                
+                // 同步当前谜题信息
+                const puzzle = await database.getChapterPuzzle(currentChapter.id);
+                if (puzzle) {
+                  socket.emit('new_puzzle', {
+                    chapterId: currentChapter.id,
+                    chapterNumber: currentChapter.chapterNumber,
+                    question: puzzle.puzzle_question,
+                    hints: puzzle.hints ? JSON.parse(puzzle.hints) : [],
+                    hintsRevealed: 0
+                  });
+                }
+              } catch (syncError) {
+                console.error(`[新玩家加入] 同步故事内容失败:`, syncError);
+              }
+            }
+          }
+          
+          callback({ success: true, room: roomData });
           
           // 广播房间更新
-          io.to(roomId).emit('room_updated', room.toJSON());
+          io.to(roomId).emit('room_updated', roomData);
         } catch (error) {
           errorLogger(error, { event: 'join_room', socketId: socket.id });
           callback({ 
@@ -315,16 +395,36 @@ class StoryWeaverServer {
             });
           }
           
-          // 设置超时（30秒）
+          // 设置超时（60秒，因为AI生成可能需要较长时间）
           const timeout = setTimeout(() => {
             callback({
               success: false,
               error: '请求超时，请稍后重试',
               code: 'REQUEST_TIMEOUT'
             });
-          }, 30000);
+          }, 60000);
           
-          // 处理消息
+          // 对于全局消息，立即广播给其他玩家，不等待AI处理
+          if (messageType === 'global') {
+            // 先创建并广播玩家消息
+            const tempMessage = {
+              id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'global',
+              visibility: 'global',
+              senderId: playerId,
+              sender: socket.data.username,
+              content: message.trim(),
+              timestamp: new Date(),
+              roomId: roomId,
+              isPrivate: false
+            };
+            
+            // 立即广播给其他玩家
+            socket.broadcast.to(roomId).emit('new_message', tempMessage);
+            console.log(`[全局消息] 立即广播消息给房间 ${roomId} 的其他玩家`);
+          }
+          
+          // 处理消息（包括AI响应等）
           const result = await gameEngine.processMessage(
             roomId, 
             playerId, 
@@ -367,19 +467,37 @@ class StoryWeaverServer {
             
             // 根据可见性发送给相应客户端
             if (visibility === 'global') {
-              // 全局消息：广播给房间内其他玩家（不包括发送者，因为发送者前端已添加临时消息）
-              socket.broadcast.to(roomId).emit('new_message', messageData);
+              // 全局消息：已在上面立即广播，这里不需要再次广播
+              // （保留注释以说明逻辑）
             } else if (visibility === 'private') {
               // 私密消息（故事机模式）：只发送给发送者自己（确认消息已收到）
               // 注意：发送者前端已添加临时消息，这里不需要再发送
             } else if (visibility === 'direct') {
-              // 玩家间私聊消息：只发送给接收者（发送者前端已添加临时消息）
+              // 玩家间私聊消息：发送给接收者和发送者双方
+              console.log(`[玩家私聊] 发送者: ${playerId}, 接收者: ${recipientId}`);
+              
+              // 发送给接收者
               const recipientSocket = Array.from(io.sockets.sockets.values())
                 .find(s => s.data.playerId === recipientId && s.data.roomId === roomId);
               
               if (recipientSocket) {
-                recipientSocket.emit('new_message', messageData);
+                console.log(`[玩家私聊] 发送消息给接收者 ${recipientId}`);
+                recipientSocket.emit('new_message', {
+                  ...messageData,
+                  visibility: 'direct',
+                  type: 'player_to_player'
+                });
+              } else {
+                console.log(`[玩家私聊] 警告: 找不到接收者 ${recipientId} 的socket连接`);
               }
+              
+              // 也发送给发送者（确保发送者能看到自己的消息）
+              socket.emit('new_message', {
+                ...messageData,
+                visibility: 'direct',
+                type: 'player_to_player'
+              });
+              console.log(`[玩家私聊] 发送消息确认给发送者 ${playerId}`);
             }
           }
           
@@ -391,6 +509,31 @@ class StoryWeaverServer {
             console.log(`[发送故事机消息] 故事机消息已发送`);
           } else {
             console.log(`[发送故事机消息] 警告: result.storyMachineMessage 不存在，消息类型: ${messageType}`);
+          }
+          
+          // 处理谜题验证结果 - 广播给所有玩家看到解谜进度
+          if (result.puzzleValidation) {
+            const currentChapter = gameEngine.getCurrentChapter(room.story);
+            if (currentChapter) {
+              // 获取当前谜题进度
+              const puzzleProgress = await database.getAllPlayerPuzzleProgress(currentChapter.id, roomId);
+              
+              // 广播谜题进度更新（不透露答案，只显示谁已解开）
+              io.to(roomId).emit('puzzle_progress_update', {
+                chapterId: currentChapter.id,
+                playerId: playerId,
+                playerName: room.players.find(p => p.id === playerId)?.username || '未知玩家',
+                isCorrect: result.puzzleValidation.isCorrect,
+                solvedPlayers: puzzleProgress.filter(p => p.is_solved).map(p => ({
+                  playerId: p.player_id,
+                  playerName: room.players.find(pl => pl.id === p.player_id)?.username || '未知玩家'
+                })),
+                totalPlayers: room.players.length,
+                solvedCount: puzzleProgress.filter(p => p.is_solved).length
+              });
+              
+              console.log(`[谜题进度] 玩家 ${playerId} 尝试解谜，结果: ${result.puzzleValidation.isCorrect ? '正确' : '错误'}`);
+            }
           }
           
           // 如果有AI生成的章节，广播给所有玩家
@@ -441,42 +584,62 @@ class StoryWeaverServer {
             }
           }
           
-          // 处理章节推进结果
+          // 处理章节推进结果（所有玩家解开谜题后）
           if (result.progressionResult && result.progressionResult.ready) {
             const { newChapter, interactionResult } = result.progressionResult;
             
-            // 广播新章节
+            console.log(`[章节推进广播] 所有玩家解开谜题，推进到第 ${newChapter.chapterNumber} 章`);
+            
+            // 1. 先广播解谜成功消息
+            io.to(roomId).emit('puzzle_all_solved', {
+              message: '🎉 恭喜！所有玩家都成功解开了本章谜题！',
+              chapterNumber: newChapter.chapterNumber - 1,
+              nextChapterNumber: newChapter.chapterNumber
+            });
+            
+            // 2. 广播新章节
             io.to(roomId).emit('new_chapter', {
               chapter: newChapter,
               author: { id: 'system', username: '系统' },
-              room: room
+              room: room,
+              triggeredBy: 'puzzle_solved'
             });
             
-            // 发送章节准备就绪事件
+            // 3. 发送章节准备就绪事件
             io.to(roomId).emit('chapter_ready', {
               chapterId: newChapter.id,
               chapterNumber: newChapter.chapterNumber,
-              message: '所有玩家反馈收集完成，新章节已生成'
+              message: '所有玩家解开谜题，新章节已生成'
             });
             
-            // 处理新章节的故事机初始消息
+            // 4. 处理新章节的故事机初始消息（每个玩家专属线索）
             if (interactionResult) {
-              const { storyMachineMessages, todos, chapterId } = interactionResult;
+              const { storyMachineMessages, puzzle, playerClues, chapterId } = interactionResult;
+              
+              // 向每个玩家发送专属的故事机消息（包含线索）
               storyMachineMessages.forEach(({ playerId: targetPlayerId, message }) => {
                 const targetSocket = Array.from(io.sockets.sockets.values())
                   .find(s => s.data.playerId === targetPlayerId && s.data.roomId === roomId);
                 if (targetSocket) {
-                  targetSocket.emit('story_machine_init', message);
+                  targetSocket.emit('story_machine_init', {
+                    ...message,
+                    chapterId: chapterId,
+                    chapterNumber: newChapter.chapterNumber
+                  });
+                  console.log(`[章节推进广播] 已向玩家 ${targetPlayerId} 发送专属线索`);
                 }
               });
               
-              // 广播TODO列表和进度信息
-              const allPlayersProgress = await database.getAllPlayersProgress(chapterId);
-              io.to(roomId).emit('feedback_progress_update', {
-                chapterId,
-                todos,
-                playersProgress: allPlayersProgress
-              });
+              // 5. 广播谜题信息（只发送问题，不发送答案）
+              if (puzzle) {
+                io.to(roomId).emit('new_puzzle', {
+                  chapterId: chapterId,
+                  chapterNumber: newChapter.chapterNumber,
+                  question: puzzle.question,
+                  hints: puzzle.hints || [],
+                  hintsRevealed: 0
+                });
+              }
             }
           }
         } catch (error) {
@@ -755,6 +918,152 @@ class StoryWeaverServer {
             error: error.message,
             code: error.code || 'INTERNAL_ERROR'
           });
+        }
+      }));
+      
+      // ==================== 角色和线索相关接口 ====================
+      
+      // 获取故事中的所有角色
+      socket.on('get_characters', wrapSocketHandler('get_characters', async (data, callback) => {
+        try {
+          const { storyId } = data;
+          const { roomId, playerId } = socket.data;
+          
+          console.log('📋 get_characters 请求:', { storyId, roomId, playerId });
+          
+          if (!roomId || !playerId) {
+            console.log('❌ get_characters: 未加入房间');
+            return callback({ success: false, error: '未加入房间', code: 'NOT_IN_ROOM' });
+          }
+          
+          const characters = await database.getStoryCharacters(storyId);
+          console.log('✅ get_characters 结果:', characters?.length || 0, '个角色');
+          callback({ success: true, characters: characters || [] });
+        } catch (error) {
+          console.error('❌ get_characters 错误:', error);
+          errorLogger(error, { event: 'get_characters', socketId: socket.id });
+          callback({ success: false, error: error.message, code: 'INTERNAL_ERROR' });
+        }
+      }));
+      
+      // 获取单个角色详情和线索卡片
+      socket.on('get_character_details', wrapSocketHandler('get_character_details', async (data, callback) => {
+        try {
+          const { characterId } = data;
+          const { playerId } = socket.data;
+          
+          if (!playerId) {
+            return callback({ success: false, error: '未加入房间', code: 'NOT_IN_ROOM' });
+          }
+          
+          // 获取角色信息
+          const character = await database.getCharacter(characterId);
+          if (!character) {
+            return callback({ success: false, error: '角色不存在', code: 'NOT_FOUND' });
+          }
+          
+          // 获取该玩家可见的线索卡片
+          const clueCards = await database.getCharacterClueCards(characterId, playerId);
+          
+          // 获取玩家角色信息（用于判断特殊权限）
+          const playerRole = await database.getPlayerRole(character.story_id, playerId);
+          
+          callback({ 
+            success: true, 
+            character: {
+              ...character,
+              // 隐藏某些敏感信息（如完整秘密）
+              secret: playerRole?.discovered_clues?.includes('secret_' + characterId) 
+                ? character.secret 
+                : '???'
+            },
+            clueCards,
+            playerRole
+          });
+        } catch (error) {
+          errorLogger(error, { event: 'get_character_details', socketId: socket.id });
+          callback({ success: false, error: error.message, code: 'INTERNAL_ERROR' });
+        }
+      }));
+      
+      // 发现线索
+      socket.on('discover_clue', wrapSocketHandler('discover_clue', async (data, callback) => {
+        try {
+          const { clueCardId, storyId } = data;
+          const { playerId, roomId } = socket.data;
+          
+          if (!playerId) {
+            return callback({ success: false, error: '未加入房间', code: 'NOT_IN_ROOM' });
+          }
+          
+          // 标记线索为已发现
+          await database.discoverClue(clueCardId, playerId);
+          
+          // 更新玩家发现的线索记录
+          await database.updatePlayerDiscoveredClues(storyId, playerId, clueCardId);
+          
+          // 广播给房间内所有玩家（但不透露具体内容）
+          io.to(roomId).emit('clue_discovered', {
+            playerId,
+            clueCardId,
+            message: '有玩家发现了新线索！'
+          });
+          
+          callback({ success: true });
+        } catch (error) {
+          errorLogger(error, { event: 'discover_clue', socketId: socket.id });
+          callback({ success: false, error: error.message, code: 'INTERNAL_ERROR' });
+        }
+      }));
+      
+      // 获取玩家在故事中的角色
+      socket.on('get_player_role', wrapSocketHandler('get_player_role', async (data, callback) => {
+        try {
+          const { storyId } = data;
+          const { playerId } = socket.data;
+          
+          console.log('🎭 get_player_role 请求:', { storyId, playerId });
+          
+          if (!playerId) {
+            console.log('❌ get_player_role: 未加入房间');
+            return callback({ success: false, error: '未加入房间', code: 'NOT_IN_ROOM' });
+          }
+          
+          const role = await database.getPlayerRole(storyId, playerId);
+          console.log('✅ get_player_role 结果:', role ? '找到角色' : '无角色');
+          callback({ success: true, role });
+        } catch (error) {
+          console.error('❌ get_player_role 错误:', error);
+          errorLogger(error, { event: 'get_player_role', socketId: socket.id });
+          callback({ success: false, error: error.message, code: 'INTERNAL_ERROR' });
+        }
+      }));
+      
+      // 记录玩家互动（用于AI生成剧情参考）
+      socket.on('record_interaction', wrapSocketHandler('record_interaction', async (data, callback) => {
+        try {
+          const { storyId, chapterId, interactionType, targetCharacter, actionDescription } = data;
+          const { playerId } = socket.data;
+          
+          if (!playerId) {
+            return callback({ success: false, error: '未加入房间', code: 'NOT_IN_ROOM' });
+          }
+          
+          const { v4: uuidv4 } = await import('uuid');
+          await database.recordPlayerInteraction({
+            id: uuidv4(),
+            storyId,
+            chapterId,
+            playerId,
+            interactionType,
+            targetCharacter,
+            actionDescription
+          });
+          
+          callback({ success: true });
+        } catch (error) {
+          errorLogger(error, { event: 'record_interaction', socketId: socket.id });
+          callback({ success: false, error: error.message, code: 'INTERNAL_ERROR' });
         }
       }));
       

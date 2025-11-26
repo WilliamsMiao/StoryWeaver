@@ -4,6 +4,7 @@ import { useGame } from '../context/GameContext';
 import StoryPanel from './GameRoom/StoryPanel';
 import InputPanel from './GameRoom/InputPanel';
 import StatusPanel from './GameRoom/StatusPanel';
+import CharacterPanel from './GameRoom/CharacterPanel';
 import { FullPagePixelLoader } from './PixelLoader';
 
 export default function GameRoom() {
@@ -12,7 +13,7 @@ export default function GameRoom() {
   const { room, story, joinRoom, leaveRoom, player, socketConnected } = useGame();
   const [initialized, setInitialized] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarTab, setSidebarTab] = useState('players'); // 'players' | 'history'
+  const [sidebarTab, setSidebarTab] = useState('players'); // 'players' | 'history' | 'characters'
   const [copied, setCopied] = useState(false);
 
   // 复制房间ID
@@ -138,7 +139,7 @@ export default function GameRoom() {
               <div className="flex-shrink-0 flex border-b-4 border-pixel-wood-dark">
                 <button
                   onClick={() => setSidebarTab('players')}
-                  className={`flex-1 py-2 text-sm font-bold transition-colors ${
+                  className={`flex-1 py-2 text-xs font-bold transition-colors ${
                     sidebarTab === 'players'
                       ? 'bg-pixel-accent-blue text-white'
                       : 'bg-pixel-wood-light text-pixel-wood-dark hover:brightness-110'
@@ -147,8 +148,18 @@ export default function GameRoom() {
                   👥 玩家
                 </button>
                 <button
+                  onClick={() => setSidebarTab('characters')}
+                  className={`flex-1 py-2 text-xs font-bold transition-colors ${
+                    sidebarTab === 'characters'
+                      ? 'bg-pixel-accent-yellow text-pixel-wood-dark'
+                      : 'bg-pixel-wood-light text-pixel-wood-dark hover:brightness-110'
+                  }`}
+                >
+                  🎭 角色
+                </button>
+                <button
                   onClick={() => setSidebarTab('history')}
-                  className={`flex-1 py-2 text-sm font-bold transition-colors ${
+                  className={`flex-1 py-2 text-xs font-bold transition-colors ${
                     sidebarTab === 'history'
                       ? 'bg-pixel-accent-blue text-white'
                       : 'bg-pixel-wood-light text-pixel-wood-dark hover:brightness-110'
@@ -160,7 +171,11 @@ export default function GameRoom() {
               
               {/* 侧边栏内容 */}
               <div className="flex-1 overflow-y-auto">
-                <StatusPanel activeTab={sidebarTab} />
+                {sidebarTab === 'characters' ? (
+                  <CharacterPanel />
+                ) : (
+                  <StatusPanel activeTab={sidebarTab} />
+                )}
               </div>
             </div>
           )}

@@ -29,12 +29,17 @@ export const GameProvider = ({ children }) => {
   });
   const [messages, setMessages] = useState([]);
   const [storyMachineMessages, setStoryMachineMessages] = useState([]); // 故事机消息列表
+  const [directMessages, setDirectMessages] = useState([]); // 玩家间私聊消息
+  const [unreadDirectCount, setUnreadDirectCount] = useState(0); // 未读私聊消息数
   const [loading, setLoading] = useState(false);
   const [storyInitializing, setStoryInitializing] = useState(false); // 故事正在初始化中
   const [error, setError] = useState(null);
   const [playersProgress, setPlayersProgress] = useState({}); // 玩家反馈进度
   const [chapterTodos, setChapterTodos] = useState([]); // 章节TODO列表
   const [isRejoining, setIsRejoining] = useState(false); // 是否正在重新加入房间
+  const [currentPuzzle, setCurrentPuzzle] = useState(null); // 当前章节谜题
+  const [puzzleProgress, setPuzzleProgress] = useState({}); // 谜题解决进度
+  const [puzzleSolvedNotification, setPuzzleSolvedNotification] = useState(null); // 解谜成功通知
 
     // 初始化Socket连接
   useEffect(() => {
@@ -54,13 +59,34 @@ export const GameProvider = ({ children }) => {
     const handleNewMessage = (messageData) => {
       console.log('收到新消息:', messageData);
       
-      // 根据消息可见性决定是否添加到消息列表
+      // 根据消息可见性和类型决定是否添加到消息列表
+      // 故事机消息需要特殊处理：接收者是当前玩家时可见
+      const isStoryMachineMessage = messageData.type === 'story_machine' || 
+        (messageData.type === 'private' && messageData.senderId === 'ai');
+      
+      // 是否为玩家间私聊消息
+      const isDirectMessage = messageData.visibility === 'direct' || messageData.type === 'player_to_player';
+      
       const isVisible = 
         messageData.visibility === 'global' ||
-        (messageData.visibility === 'private' && messageData.senderId === player?.id) ||
-        (messageData.visibility === 'direct' && (messageData.senderId === player?.id || messageData.recipientId === player?.id));
+        // 私密消息：发送者是当前玩家，或者是故事机发给当前玩家的消息
+        (messageData.visibility === 'private' && (
+          messageData.senderId === player?.id || 
+          (isStoryMachineMessage && messageData.recipientId === player?.id)
+        )) ||
+        // 玩家间私聊：发送者或接收者是当前玩家
+        (isDirectMessage && (messageData.senderId === player?.id || messageData.recipientId === player?.id));
       
-      console.log('消息可见性检查:', { isVisible, visibility: messageData.visibility, type: messageData.type, senderId: messageData.senderId, playerId: player?.id });
+      console.log('消息可见性检查:', { 
+        isVisible, 
+        visibility: messageData.visibility, 
+        type: messageData.type, 
+        senderId: messageData.senderId, 
+        recipientId: messageData.recipientId,
+        playerId: player?.id,
+        isStoryMachineMessage,
+        isDirectMessage
+      });
       
       if (isVisible) {
         const formattedMessage = {
@@ -79,9 +105,29 @@ export const GameProvider = ({ children }) => {
         
         console.log('格式化后的消息:', formattedMessage);
         
-        // 故事机消息单独存储（只有私密消息和AI发送的故事机消息）
-        if ((messageData.type === 'private' || messageData.type === 'story_machine') && 
-            (messageData.visibility === 'private' || messageData.senderId === 'ai')) {
+        // 根据消息类型分类存储
+        if (isDirectMessage) {
+          // 玩家间私聊消息
+          // 如果是自己发送的消息，跳过（前端发送时已经添加了临时消息）
+          if (messageData.senderId === player?.id) {
+            console.log('跳过自己发送的私聊消息（已有临时消息）');
+            return;
+          }
+          console.log('添加到玩家私聊消息', formattedMessage);
+          setDirectMessages(prev => {
+            if (prev.find(m => m.id === messageData.id)) {
+              console.log('消息已存在，跳过重复添加');
+              return prev;
+            }
+            return [...prev, formattedMessage];
+          });
+          // 如果是收到的消息（不是自己发的），增加未读计数
+          if (messageData.senderId !== player?.id) {
+            setUnreadDirectCount(prev => prev + 1);
+          }
+        } else if (isStoryMachineMessage || 
+            (messageData.type === 'private' && messageData.visibility === 'private')) {
+          // 故事机消息（包括AI回复和玩家发送的私密消息）
           console.log('添加到故事机消息');
           setStoryMachineMessages(prev => {
             if (prev.find(m => m.id === messageData.id)) {
@@ -90,7 +136,7 @@ export const GameProvider = ({ children }) => {
             return [...prev, formattedMessage];
           });
         } else {
-          // 其他消息（包括全局消息）添加到主消息列表
+          // 其他消息（全局消息、章节等）添加到主消息列表
           console.log('添加到主消息列表');
           setMessages(prev => {
             if (prev.find(m => m.id === messageData.id)) {
@@ -193,6 +239,57 @@ export const GameProvider = ({ children }) => {
       // 可以在这里显示通知或更新UI
     };
     
+    // 处理谜题进度更新
+    const handlePuzzleProgressUpdate = (data) => {
+      console.log('谜题进度更新:', data);
+      setPuzzleProgress({
+        chapterId: data.chapterId,
+        solvedPlayers: data.solvedPlayers || [],
+        totalPlayers: data.totalPlayers || 0,
+        solvedCount: data.solvedCount || 0,
+        isCorrect: data.isCorrect,
+        playerId: data.playerId,
+        playerName: data.playerName
+      });
+      
+      // 如果有玩家刚解开谜题，显示通知
+      if (data.isCorrect && data.playerId !== player?.id) {
+        // 其他玩家解开了谜题
+        console.log(`玩家 ${data.playerName} 解开了谜题！`);
+      }
+    };
+    
+    // 处理所有玩家解开谜题
+    const handlePuzzleAllSolved = (data) => {
+      console.log('所有玩家解开谜题:', data);
+      setPuzzleSolvedNotification({
+        message: data.message,
+        chapterNumber: data.chapterNumber,
+        nextChapterNumber: data.nextChapterNumber,
+        timestamp: new Date()
+      });
+      
+      // 3秒后清除通知
+      setTimeout(() => {
+        setPuzzleSolvedNotification(null);
+      }, 5000);
+    };
+    
+    // 处理新谜题
+    const handleNewPuzzle = (data) => {
+      console.log('收到新谜题:', data);
+      setCurrentPuzzle({
+        chapterId: data.chapterId,
+        chapterNumber: data.chapterNumber,
+        question: data.question,
+        hints: data.hints || [],
+        hintsRevealed: data.hintsRevealed || 0
+      });
+      
+      // 重置谜题进度
+      setPuzzleProgress({});
+    };
+    
     socketManager.on('connection_status', handleConnectionStatus);
     socketManager.on('room_updated', handleRoomUpdated);
     socketManager.on('new_message', handleNewMessage);
@@ -201,6 +298,9 @@ export const GameProvider = ({ children }) => {
     socketManager.on('story_machine_init', handleStoryMachineInit);
     socketManager.on('feedback_progress_update', handleFeedbackProgressUpdate);
     socketManager.on('chapter_ready', handleChapterReady);
+    socketManager.on('puzzle_progress_update', handlePuzzleProgressUpdate);
+    socketManager.on('puzzle_all_solved', handlePuzzleAllSolved);
+    socketManager.on('new_puzzle', handleNewPuzzle);
     
     return () => {
       socketManager.off('connection_status', handleConnectionStatus);
@@ -211,6 +311,9 @@ export const GameProvider = ({ children }) => {
       socketManager.off('story_machine_init', handleStoryMachineInit);
       socketManager.off('feedback_progress_update', handleFeedbackProgressUpdate);
       socketManager.off('chapter_ready', handleChapterReady);
+      socketManager.off('puzzle_progress_update', handlePuzzleProgressUpdate);
+      socketManager.off('puzzle_all_solved', handlePuzzleAllSolved);
+      socketManager.off('new_puzzle', handleNewPuzzle);
     };
   }, []);
 
@@ -517,10 +620,13 @@ export const GameProvider = ({ children }) => {
     
     // 根据消息类型添加到不同的列表
     if (messageType === 'private') {
-      // 私聊消息添加到故事机消息列表
+      // 故事机私聊消息
       setStoryMachineMessages(prev => [...prev, playerMessage]);
+    } else if (messageType === 'player_to_player') {
+      // 玩家间私聊消息
+      setDirectMessages(prev => [...prev, playerMessage]);
     } else {
-      // 其他消息添加到主消息列表
+      // 全局消息添加到主消息列表
       setMessages(prev => [...prev, playerMessage]);
     }
     
@@ -542,18 +648,17 @@ export const GameProvider = ({ children }) => {
         // 移除临时消息（如果失败）
         if (messageType === 'private') {
           setStoryMachineMessages(prev => prev.filter(m => m.id !== tempMessageId));
+        } else if (messageType === 'player_to_player') {
+          setDirectMessages(prev => prev.filter(m => m.id !== tempMessageId));
         } else {
           setMessages(prev => prev.filter(m => m.id !== tempMessageId));
         }
         return;
       }
       
-      // 成功：移除临时消息（服务器会通过new_message事件发送正式消息）
-      if (messageType === 'private') {
-        setStoryMachineMessages(prev => prev.filter(m => m.id !== tempMessageId));
-      } else {
-        setMessages(prev => prev.filter(m => m.id !== tempMessageId));
-      }
+      // 成功：保留临时消息（全局消息会收到广播，私聊消息保持不变）
+      // 注意：全局消息发送成功后，其他玩家会收到广播，但发送者不会收到自己的消息广播
+      // 所以临时消息作为正式消息保留
       
       // 更新房间和故事
       if (response.room) {
@@ -565,12 +670,19 @@ export const GameProvider = ({ children }) => {
     });
   }, [room, player]);
 
+  // 清除未读私聊计数
+  const clearUnreadDirectCount = useCallback(() => {
+    setUnreadDirectCount(0);
+  }, []);
+
   // 离开房间
   const leaveRoom = useCallback(() => {
     setRoom(null);
     setStory(null);
     setMessages([]);
     setStoryMachineMessages([]);
+    setDirectMessages([]);
+    setUnreadDirectCount(0);
     setError(null);
     // 清理 localStorage 中的房间和故事信息
     localStorage.removeItem('storyweaver_room');
@@ -584,17 +696,25 @@ export const GameProvider = ({ children }) => {
     story,
     messages,
     storyMachineMessages,
+    directMessages,
+    unreadDirectCount,
     playersProgress,
     chapterTodos,
     loading,
     storyInitializing,
     error,
+    // 新增谜题相关状态
+    currentPuzzle,
+    puzzleProgress,
+    puzzleSolvedNotification,
+    // 方法
     savePlayer,
     createRoom,
     joinRoom,
     initializeStory,
     sendMessage,
     leaveRoom,
+    clearUnreadDirectCount,
     setError
   };
 

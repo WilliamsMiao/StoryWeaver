@@ -286,74 +286,213 @@ class GameEngine {
   }
 
   /**
-   * 生成第一个章节
+   * 生成第一个章节（增强版 - 包含角色和线索卡片）
    */
   async generateFirstChapter(story, title, background) {
     const AIService = (await import('../ai-service/AIService.js')).default;
     const database = (await import('../storage/database.js')).default;
     const { v4: uuidv4 } = await import('uuid');
     
-    // 生成章节内容
-    const chapterContent = await AIService.generateStoryResponse(
-      {
-        title,
-        background,
-        currentChapter: 0,
-        chapters: [],
-        memories: []
-      },
-      `【剧本杀游戏 - 第一章开篇】
+    // 获取房间内的玩家
+    const room = this.rooms.get(story.roomId);
+    const players = room ? Array.from(room.players.values()).map(p => ({
+      id: p.id,
+      username: p.username
+    })) : [];
+    
+    console.log(`[生成首章] 开始生成，玩家数: ${players.length}`);
+    
+    // 1. 首先为玩家生成角色设定
+    let playerRoles = [];
+    if (players.length > 0) {
+      try {
+        playerRoles = await AIService.generatePlayerRoles(players, { title, background });
+        console.log(`[生成首章] 玩家角色生成完成:`, playerRoles.map(r => r.characterName));
+        
+        // 保存玩家角色到数据库
+        for (const role of playerRoles) {
+          // 创建玩家对应的角色
+          const characterId = uuidv4();
+          await database.createCharacter({
+            id: characterId,
+            storyId: story.id,
+            name: role.characterName,
+            characterType: 'player',
+            playerId: role.playerId,
+            occupation: role.occupation,
+            personality: role.personality,
+            background: role.secretInfo,
+            secret: role.secretInfo,
+            firstAppearanceChapter: 1
+          });
+          
+          // 分配角色给玩家
+          await database.assignPlayerRole({
+            id: uuidv4(),
+            storyId: story.id,
+            playerId: role.playerId,
+            characterId: characterId,
+            roleType: role.roleType,
+            specialAbility: role.specialAbility,
+            personalGoal: role.personalGoal,
+            secretInfo: role.secretInfo
+          });
+        }
+      } catch (error) {
+        console.error('[生成首章] 玩家角色生成失败:', error);
+        playerRoles = AIService.generateDefaultPlayerRoles(players);
+      }
+    }
+    
+    // 2. 生成增强版章节（包含NPC角色和线索卡片）
+    let chapterResult;
+    try {
+      chapterResult = await AIService.generateEnhancedChapter(
+        { title, background, currentChapter: 1, chapters: [] },
+        `【剧本杀游戏 - 第一章开篇】
 
-你正在为一款多人在线剧本杀游戏生成故事开篇。请为故事"${title}"创作第一章的精彩开头。
+为故事"${title}"创作第一章开头。
 
-故事背景：${background}
+## 玩家角色：
+${playerRoles.map(r => `- ${r.characterName}（${r.occupation}）: ${r.personalGoal}`).join('\n')}
 
 ## 创作要求：
+1. 设置一个引人入胜的谜团或案件
+2. 创建2-3个NPC角色（如管家、嫌疑人等）
+3. 将所有玩家自然地写入剧情，给他们具体的行动
+4. 埋入可发现的线索
+5. 结尾留下悬念
 
-### 1. 剧本杀核心元素
-- **悬疑氛围**：设置一个引人入胜的谜团或事件作为故事核心
-- **多角色设计**：创建2-4个性格鲜明的NPC角色，他们可能有各自的秘密和动机
-- **线索埋设**：在场景描写中自然地埋入可供玩家发现的线索
-- **选择空间**：故事应该为玩家留下探索和选择的空间
-
-### 2. 场景与氛围
-- 详细描述故事发生的场景和环境
-- 营造适合推理探索的氛围（可以是古宅、派对、神秘岛屿等）
-- 交代时间背景和基本设定
-
-### 3. 事件触发
-- 以一个引人注目的事件作为故事开端（如突发案件、神秘邀请、意外发现等）
-- 让玩家有参与感和紧迫感
-
-### 4. 格式要求
-- 字数：300-500字
-- 当出现NPC时，使用格式 [NPC:名称] 标记，例如："[NPC:管家老陈]走了过来"
-- 结尾留下悬念，引导玩家开始探索
-
-请创作一个精彩的开篇，让玩家迫不及待想要参与这场剧本杀游戏！`
-    );
+背景：${background}`,
+        players,
+        [],
+        []
+      );
+    } catch (error) {
+      console.error('[生成首章] 增强章节生成失败，使用基础版:', error);
+      // 回退到基础版生成
+      const basicContent = await AIService.generateStoryResponse(
+        { title, background, currentChapter: 0, chapters: [], memories: [] },
+        `【剧本杀游戏 - 第一章开篇】创作故事"${title}"的开头。背景：${background}。要求：设置悬疑事件，创建NPC角色用[NPC:名称]标记，将玩家${players.map(p=>p.username).join('、')}写入剧情用[玩家:名称]标记。`
+      );
+      chapterResult = {
+        chapterContent: basicContent.content,
+        newCharacters: [],
+        clueCards: [],
+        playerRoles: []
+      };
+    }
     
-    // 创建章节
+    // 3. 保存章节
     const chapterId = uuidv4();
     const chapterNumber = 1;
     await database.createChapter(
       chapterId,
       story.id,
       chapterNumber,
-      chapterContent.content,
-      null,  // authorId 设为 null，因为是系统生成
-      null   // summary 设为 null
+      chapterResult.chapterContent,
+      null,
+      null
     );
+    
+    // 4. 保存NPC角色
+    const savedCharacters = [];
+    if (chapterResult.newCharacters && chapterResult.newCharacters.length > 0) {
+      for (const npc of chapterResult.newCharacters) {
+        const characterId = uuidv4();
+        await database.createCharacter({
+          id: characterId,
+          storyId: story.id,
+          name: npc.name,
+          characterType: npc.type || 'npc',
+          age: npc.age,
+          occupation: npc.occupation,
+          personality: npc.personality,
+          background: npc.background,
+          secret: npc.secret,
+          firstAppearanceChapter: 1,
+          isSuspect: npc.isSuspect ? 1 : 0,
+          suspicionLevel: npc.suspicionLevel || 0
+        });
+        savedCharacters.push({ id: characterId, ...npc });
+        console.log(`[生成首章] 保存NPC: ${npc.name}`);
+      }
+    }
+    
+    // 5. 保存线索卡片
+    if (chapterResult.clueCards && chapterResult.clueCards.length > 0) {
+      for (const clue of chapterResult.clueCards) {
+        // 找到关联的角色
+        let characterId = null;
+        if (clue.characterName) {
+          const char = savedCharacters.find(c => c.name === clue.characterName);
+          if (char) {
+            characterId = char.id;
+          } else {
+            // 查找数据库中的角色
+            const dbChar = await database.findCharacterByName(story.id, clue.characterName);
+            if (dbChar) characterId = dbChar.id;
+          }
+        }
+        
+        if (characterId) {
+          await database.createCharacterClueCard({
+            id: uuidv4(),
+            characterId: characterId,
+            chapterId: chapterId,
+            storyId: story.id,
+            clueCategory: clue.category,
+            clueTitle: clue.title,
+            clueContent: clue.content,
+            clueImportance: clue.importance || 1,
+            isHidden: clue.isHidden ? 1 : 0
+          });
+          console.log(`[生成首章] 保存线索: ${clue.title} -> ${clue.characterName}`);
+        }
+      }
+    }
+    
+    // 6. 为每个NPC生成额外的线索卡片
+    for (const char of savedCharacters) {
+      try {
+        const extraClues = await AIService.generateCharacterClueCards(
+          char,
+          { title, background },
+          1
+        );
+        for (const clue of extraClues) {
+          await database.createCharacterClueCard({
+            id: uuidv4(),
+            characterId: char.id,
+            chapterId: chapterId,
+            storyId: story.id,
+            clueCategory: clue.category,
+            clueTitle: clue.title,
+            clueContent: clue.content,
+            clueImportance: clue.importance || 1,
+            isHidden: clue.isHidden ? 1 : 0,
+            discoveryCondition: clue.discoveryCondition
+          });
+        }
+        console.log(`[生成首章] 为 ${char.name} 生成 ${extraClues.length} 条额外线索`);
+      } catch (error) {
+        console.error(`[生成首章] 生成角色 ${char.name} 的线索失败:`, error);
+      }
+    }
     
     const chapter = {
       id: chapterId,
       chapterNumber,
-      content: chapterContent.content,
+      content: chapterResult.chapterContent,
       createdAt: new Date(),
-      summary: null
+      summary: null,
+      characters: savedCharacters,
+      playerRoles: playerRoles
     };
     
     story.addChapter(chapter);
+    
+    console.log(`[生成首章] 完成! 角色数: ${savedCharacters.length}, 线索数: ${chapterResult.clueCards?.length || 0}`);
     
     return chapter;
   }
@@ -589,7 +728,7 @@ class GameEngine {
       }
       
     } else if (messageType === 'private') {
-      // 故事机模式：AI主动更新信息并收取反馈
+      // 故事机模式：智能交互系统
       console.log(`[私聊消息处理] 开始处理私聊消息，玩家ID: ${playerId}, 房间ID: ${roomId}`);
       
       // 获取当前章节
@@ -600,28 +739,71 @@ class GameEngine {
       }
       console.log(`[私聊消息处理] 当前章节: ${currentChapter.chapterNumber}, 章节ID: ${currentChapter.id}`);
       
-      // 获取章节TODO列表（包含预期答案）
-      const todos = await database.getChapterTodos(currentChapter.id);
-      console.log(`[私聊消息处理] 获取到 ${todos.length} 个TODO项`);
+      // 获取玩家的线索和谜题状态
+      const playerClues = await database.getPlayerClues(currentChapter.id, playerId);
+      const revealedClues = await database.getRevealedClues(currentChapter.id, playerId);
+      const puzzle = await database.getChapterPuzzle(currentChapter.id);
+      let puzzleProgress = null;
+      if (puzzle) {
+        puzzleProgress = await database.getPlayerPuzzleProgress(puzzle.id, playerId);
+      }
       
-      // 评估玩家反馈
-      const feedbackResult = await this.evaluateFeedback(
-        playerId,
-        message,
-        currentChapter.id,
-        todos,
-        room.story
-      );
-      console.log(`[私聊消息处理] 反馈评估完成`);
+      // 检查玩家是否在尝试解谜
+      const intent = AIService.analyzePlayerIntent(message);
+      let puzzleValidation = null;
       
-      // 调用故事机专用方法生成响应，传入 TODO 列表用于智能答案评估
-      console.log(`[私聊消息处理] 开始调用AI生成响应...`);
+      if (intent.type === 'answer_puzzle' && puzzle && !puzzleProgress?.is_solved) {
+        // 验证谜题答案
+        puzzleValidation = await AIService.validatePuzzleAnswer(message, puzzle);
+        
+        // 更新玩家解谜进度
+        await database.updatePlayerPuzzleProgress({
+          puzzleId: puzzle.id,
+          playerId: playerId,
+          lastAnswer: message,
+          isSolved: puzzleValidation.isCorrect,
+          hintsUsed: puzzleProgress?.hints_used || 0
+        });
+        
+        if (puzzleValidation.isCorrect) {
+          console.log(`[私聊消息处理] 玩家 ${playerId} 解开了谜题！`);
+        }
+      }
+      
+      // 构建玩家状态用于智能响应
+      const playerState = {
+        clues: playerClues,
+        revealedClues: revealedClues.map(c => c.id),
+        puzzle: puzzle,
+        puzzleProgress: puzzleProgress,
+        puzzleValidation: puzzleValidation
+      };
+      
+      // 调用智能故事机响应
+      console.log(`[私聊消息处理] 开始调用智能AI生成响应...`);
       try {
-        storyMachineResponse = await AIService.generateStoryMachineResponse(context, message, playerId, todos);
+        storyMachineResponse = await AIService.generateSmartStoryMachineResponse(
+          context, 
+          message, 
+          playerId, 
+          playerState
+        );
         console.log(`[私聊消息处理] AI响应生成成功，内容长度: ${storyMachineResponse?.content?.length || 0}`);
+        
+        // 如果需要揭示线索，更新数据库
+        if (storyMachineResponse.shouldRevealClue && storyMachineResponse.revealedClue) {
+          await database.revealClue(storyMachineResponse.revealedClue.id);
+          console.log(`[私聊消息处理] 已揭示线索: ${storyMachineResponse.revealedClue.id}`);
+        }
       } catch (error) {
         console.error(`[私聊消息处理] AI响应生成失败:`, error.message, error.stack);
         throw error;
+      }
+      
+      // 如果解谜正确，在响应中添加反馈
+      let responseContent = storyMachineResponse.content;
+      if (puzzleValidation) {
+        responseContent = `${puzzleValidation.feedback}\n\n${responseContent}`;
       }
       
       // 创建故事机AI响应消息
@@ -634,7 +816,7 @@ class GameEngine {
         sender: '故事机',
         recipientId: playerId,
         recipientName: player.username,
-        content: storyMachineResponse.content,
+        content: responseContent,
         timestamp: new Date(),
         roomId: roomId,
         storyId: room.story.id,
@@ -653,13 +835,19 @@ class GameEngine {
         recipientName: player.username,
         messageType: 'story_machine',
         visibility: 'private',
-        content: storyMachineResponse.content,
+        content: responseContent,
         chapterNumber: currentChapter.chapterNumber
       });
       console.log(`[私聊消息处理] 故事机消息已保存到数据库`);
       
-      // 检查是否所有玩家都达到80%完成度
-      const progressionResult = await this.checkChapterProgression(currentChapter.id, roomId);
+      // 检查是否所有玩家都解开谜题，触发章节推进
+      const allSolvedResult = await database.checkAllPlayersSolvedPuzzle(currentChapter.id, roomId);
+      let progressionResult = null;
+      
+      if (allSolvedResult.allSolved) {
+        console.log(`[私聊消息处理] 所有玩家都解开了谜题，准备推进章节！`);
+        progressionResult = await this.triggerChapterProgression(currentChapter.id, roomId, room.story);
+      }
       
       console.log(`[私聊消息处理] 处理完成，返回结果，storyMachineMessage存在: ${!!storyMachineMessage}`);
       
@@ -670,8 +858,8 @@ class GameEngine {
         memories: [],
         aiModel: storyMachineResponse.model,
         chapterTransition: null,
-        feedbackResult: feedbackResult,
-        progressionResult: progressionResult.ready ? progressionResult : null
+        puzzleValidation: puzzleValidation,
+        progressionResult: progressionResult
       };
       
     } else if (messageType === 'player_to_player') {
@@ -853,7 +1041,7 @@ class GameEngine {
   }
   
   /**
-   * 启动故事机互动：生成TODO列表并向所有玩家发送初始消息
+   * 启动故事机互动：生成谜题、玩家专属线索，并向所有玩家发送初始消息
    * @param {string} roomId - 房间ID
    * @param {string} chapterId - 章节ID
    * @param {Object} story - 故事对象
@@ -871,7 +1059,59 @@ class GameEngine {
       throw new Error('章节不存在');
     }
     
-    // 生成TODO列表
+    // 获取房间内所有玩家
+    const players = Array.from(room.players.values()).map(p => ({
+      id: p.id,
+      username: p.username,
+      role: p.role || 'player'
+    }));
+    
+    console.log(`[故事机初始化] 开始为章节 ${chapterId} 生成谜题和线索，玩家数: ${players.length}`);
+    
+    // 生成谜题和玩家专属线索
+    const { puzzle, playerClues } = await AIService.generatePuzzleAndClues(
+      chapter.content,
+      {
+        title: story.title,
+        background: story.background,
+        currentChapter: chapter.chapterNumber
+      },
+      players
+    );
+    
+    // 保存谜题到数据库
+    const puzzleId = uuidv4();
+    await database.createChapterPuzzle({
+      id: puzzleId,
+      chapterId: chapterId,
+      storyId: story.id,
+      puzzleQuestion: puzzle.question,
+      correctAnswer: puzzle.correct_answer,
+      answerKeywords: puzzle.answer_keywords,
+      difficulty: puzzle.difficulty || 3
+    });
+    console.log(`[故事机初始化] 谜题已保存，ID: ${puzzleId}`);
+    
+    // 为每个玩家保存专属线索
+    for (const player of players) {
+      const clues = playerClues[player.id] || [];
+      for (const clue of clues) {
+        const clueId = uuidv4();
+        await database.createPlayerClue({
+          id: clueId,
+          chapterId: chapterId,
+          playerId: player.id,
+          clueType: clue.type,
+          clueContent: clue.content,
+          clueSource: clue.source,
+          relevanceToPuzzle: clue.relevance,
+          canShare: clue.canShare ? 1 : 0
+        });
+      }
+      console.log(`[故事机初始化] 玩家 ${player.username} 获得 ${clues.length} 条线索`);
+    }
+    
+    // 生成TODO列表（用于兼容现有系统）
     const todos = await AIService.generateChapterTodos(chapter.content, {
       title: story.title,
       background: story.background,
@@ -881,19 +1121,32 @@ class GameEngine {
     // 保存TODO到数据库
     await database.createChapterTodos(chapterId, todos);
     
-    // 获取房间内所有玩家
-    const players = Array.from(room.players.values());
-    
     // 为每个玩家生成个性化的故事机初始消息
     const storyMachineMessages = await Promise.all(
       players.map(async (player) => {
-        // 基于TODO生成个性化的初始消息
-        const initialMessage = await this.generateStoryMachineInitialMessage(
-          chapter,
-          todos,
-          player,
-          story
-        );
+        // 获取该玩家的线索
+        const playerSpecificClues = playerClues[player.id] || [];
+        
+        // 生成包含第一条线索的初始消息
+        const firstClue = playerSpecificClues[0];
+        let initialMessage = `🤖 **故事机已激活**\n\n`;
+        initialMessage += `📖 新的章节已经开始。作为 ${player.username}，你将在这个谜题中扮演重要角色。\n\n`;
+        
+        if (firstClue) {
+          initialMessage += `💡 **你的第一条线索**\n`;
+          initialMessage += `_${firstClue.source}_\n\n`;
+          initialMessage += `"${firstClue.content}"\n\n`;
+          
+          // 标记第一条线索为已揭示
+          const firstClueRecord = await database.getPlayerClues(chapterId, player.id);
+          if (firstClueRecord.length > 0) {
+            await database.revealClue(firstClueRecord[0].id);
+          }
+        }
+        
+        initialMessage += `🔮 **本章谜题**\n${puzzle.question}\n\n`;
+        initialMessage += `💬 与我对话获取更多线索，或尝试回答谜题。记住，只有你能看到我们的对话！\n`;
+        initialMessage += `🤝 也许其他玩家手中也有关键的线索...`;
         
         // 保存消息到数据库
         const messageId = uuidv4();
@@ -910,10 +1163,6 @@ class GameEngine {
           content: initialMessage,
           chapterNumber: chapter.chapterNumber
         });
-        
-        // 设置10分钟超时
-        const timeoutAt = new Date(Date.now() + 10 * 60 * 1000); // 10分钟后
-        await database.setPlayerTimeout(chapterId, player.id, timeoutAt);
         
         return {
           playerId: player.id,
@@ -935,16 +1184,225 @@ class GameEngine {
       })
     );
     
-    // 设置超时定时器（10分钟后检查）
-    setTimeout(async () => {
-      await this.handleFeedbackTimeout(chapterId, roomId);
-    }, 10 * 60 * 1000);
+    console.log(`[故事机初始化] 完成，已向 ${storyMachineMessages.length} 个玩家发送初始消息`);
     
     return {
       todos,
+      puzzle: { id: puzzleId, ...puzzle },
+      playerClues,
       storyMachineMessages,
       chapterId
     };
+  }
+  
+  /**
+   * 为新加入的玩家生成线索和故事机消息
+   * @param {string} roomId - 房间ID
+   * @param {string} chapterId - 当前章节ID
+   * @param {Object} player - 玩家信息 { id, username }
+   */
+  async generateCluesForNewPlayer(roomId, chapterId, player) {
+    const room = this.rooms.get(roomId);
+    if (!room || !room.story) {
+      throw new Error('房间或故事不存在');
+    }
+    
+    const chapter = room.story.chapters.find(ch => ch.id === chapterId);
+    if (!chapter) {
+      throw new Error('章节不存在');
+    }
+    
+    console.log(`[新玩家线索] 为玩家 ${player.username} 生成专属线索`);
+    
+    // 获取当前谜题
+    const puzzle = await database.getChapterPuzzle(chapterId);
+    
+    // 使用AI为新玩家生成专属线索
+    const cluesResult = await AIService.generateCluesForSinglePlayer(
+      chapter.content,
+      {
+        title: room.story.title,
+        background: room.story.background,
+        currentChapter: chapter.chapterNumber
+      },
+      player,
+      puzzle
+    );
+    
+    // 保存线索到数据库
+    for (const clue of cluesResult.clues) {
+      const clueId = uuidv4();
+      await database.createPlayerClue({
+        id: clueId,
+        chapterId: chapterId,
+        playerId: player.id,
+        clueType: clue.type,
+        clueContent: clue.content,
+        clueSource: clue.source,
+        relevanceToPuzzle: clue.relevance,
+        canShare: clue.canShare ? 1 : 0
+      });
+    }
+    
+    // 生成故事机初始消息
+    const firstClue = cluesResult.clues[0];
+    let initialMessage = `🤖 **故事机已激活**\n\n`;
+    initialMessage += `📖 你作为新加入的侦探 ${player.username}，正式加入调查。\n\n`;
+    
+    if (firstClue) {
+      initialMessage += `💡 **你的第一条线索**\n`;
+      initialMessage += `_${firstClue.source}_\n\n`;
+      initialMessage += `> ${firstClue.content}\n\n`;
+      
+      // 标记第一条线索为已揭示
+      const firstClueRecord = await database.getPlayerClues(chapterId, player.id);
+      if (firstClueRecord.length > 0) {
+        await database.revealClue(firstClueRecord[0].id);
+      }
+    }
+    
+    if (puzzle) {
+      initialMessage += `🔮 **本章谜题**\n> ${puzzle.puzzle_question}\n\n`;
+    }
+    
+    initialMessage += `💬 与我对话获取更多线索，或尝试回答谜题。\n`;
+    initialMessage += `🤝 也许其他玩家手中也有关键的线索...`;
+    
+    // 保存消息到数据库
+    const messageId = uuidv4();
+    await database.createMessage({
+      id: messageId,
+      roomId: roomId,
+      storyId: room.story.id,
+      senderId: 'ai',
+      senderName: '故事机',
+      recipientId: player.id,
+      recipientName: player.username,
+      messageType: 'story_machine',
+      visibility: 'private',
+      content: initialMessage,
+      chapterNumber: chapter.chapterNumber
+    });
+    
+    console.log(`[新玩家线索] 玩家 ${player.username} 获得 ${cluesResult.clues.length} 条线索`);
+    
+    return {
+      clues: cluesResult.clues,
+      storyMachineMessage: {
+        id: messageId,
+        type: 'story_machine',
+        visibility: 'private',
+        senderId: 'ai',
+        sender: '故事机',
+        recipientId: player.id,
+        recipientName: player.username,
+        content: initialMessage,
+        timestamp: new Date(),
+        roomId: roomId,
+        storyId: room.story.id,
+        isPrivate: true
+      }
+    };
+  }
+  
+  /**
+   * 触发章节推进（所有玩家解开谜题后）
+   * @param {string} currentChapterId - 当前章节ID
+   * @param {string} roomId - 房间ID
+   * @param {Object} story - 故事对象
+   */
+  async triggerChapterProgression(currentChapterId, roomId, story) {
+    console.log(`[章节推进] 开始推进章节，当前章节: ${currentChapterId}`);
+    
+    // 获取当前章节
+    const currentChapter = story.chapters.find(ch => ch.id === currentChapterId);
+    if (!currentChapter) {
+      throw new Error('当前章节不存在');
+    }
+    
+    // 生成下一章节
+    const nextChapter = await this.generateNextChapter(story, currentChapter);
+    
+    // 初始化新章节的故事机互动
+    const interactionResult = await this.initiateStoryMachineInteraction(
+      roomId,
+      nextChapter.id,
+      story
+    );
+    
+    return {
+      ready: true,
+      newChapter: nextChapter,
+      interactionResult
+    };
+  }
+  
+  /**
+   * 生成下一章节
+   * @param {Object} story - 故事对象
+   * @param {Object} currentChapter - 当前章节
+   */
+  async generateNextChapter(story, currentChapter) {
+    const database = (await import('../storage/database.js')).default;
+    
+    // 获取谜题解决情况作为下一章节的背景
+    const puzzle = await database.getChapterPuzzle(currentChapter.id);
+    const puzzleSolved = puzzle ? puzzle.solved === 1 : false;
+    
+    // 生成下一章节内容
+    const nextChapterContent = await AIService.generateStoryResponse(
+      {
+        title: story.title,
+        background: story.background,
+        currentChapter: currentChapter.chapterNumber,
+        chapters: story.chapters,
+        memories: story.memories || []
+      },
+      `【剧本杀游戏 - 第${currentChapter.chapterNumber + 1}章】
+
+玩家们${puzzleSolved ? '成功解开了谜题' : '在探索中'}，故事需要继续推进。
+
+## 上一章节回顾：
+${currentChapter.content.substring(0, 500)}...
+
+## 谜题结果：
+${puzzleSolved ? `谜题"${puzzle?.puzzle_question || ''}"已被解开，答案是"${puzzle?.correct_answer || ''}"` : '谜题尚未解开'}
+
+## 创作要求：
+1. 基于上一章节的发展，创作新的剧情
+2. 引入新的谜题或悬念
+3. 可以揭示部分真相，但保留核心悬念
+4. 为玩家提供新的探索方向
+5. 字数：300-500字
+6. 结尾留下悬念，引导下一步探索`
+    );
+    
+    // 创建新章节
+    const chapterId = uuidv4();
+    const chapterNumber = currentChapter.chapterNumber + 1;
+    
+    await database.createChapter(
+      chapterId,
+      story.id,
+      chapterNumber,
+      nextChapterContent.content,
+      null,
+      null
+    );
+    
+    const newChapter = {
+      id: chapterId,
+      chapterNumber,
+      content: nextChapterContent.content,
+      createdAt: new Date(),
+      summary: null
+    };
+    
+    story.addChapter(newChapter);
+    
+    console.log(`[章节推进] 新章节已生成，章节号: ${chapterNumber}`);
+    
+    return newChapter;
   }
   
   /**
