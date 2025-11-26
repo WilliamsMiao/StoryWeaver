@@ -17,8 +17,16 @@ export const GameProvider = ({ children }) => {
     const saved = localStorage.getItem('storyweaver_player');
     return saved ? JSON.parse(saved) : null;
   });
-  const [room, setRoom] = useState(null);
-  const [story, setStory] = useState(null);
+  const [room, setRoom] = useState(() => {
+    // 从 localStorage 恢复房间信息
+    const saved = localStorage.getItem('storyweaver_room');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [story, setStory] = useState(() => {
+    // 从 localStorage 恢复故事信息
+    const saved = localStorage.getItem('storyweaver_story');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [messages, setMessages] = useState([]);
   const [storyMachineMessages, setStoryMachineMessages] = useState([]); // 故事机消息列表
   const [loading, setLoading] = useState(false);
@@ -26,6 +34,7 @@ export const GameProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [playersProgress, setPlayersProgress] = useState({}); // 玩家反馈进度
   const [chapterTodos, setChapterTodos] = useState([]); // 章节TODO列表
+  const [isRejoining, setIsRejoining] = useState(false); // 是否正在重新加入房间
 
     // 初始化Socket连接
   useEffect(() => {
@@ -133,12 +142,6 @@ export const GameProvider = ({ children }) => {
     const handleStoryInitialized = (data) => {
       setStory(data.story);
       setRoom(data.room);
-      setStoryInitializing(false);
-    };
-    
-    const handleStoryGenerationStarted = (data) => {
-      console.log('故事开始生成:', data);
-      setStoryInitializing(true);
     };
     
     const handleStoryMachineInit = (messageData) => {
@@ -195,7 +198,6 @@ export const GameProvider = ({ children }) => {
     socketManager.on('new_message', handleNewMessage);
     socketManager.on('new_chapter', handleNewChapter);
     socketManager.on('story_initialized', handleStoryInitialized);
-    socketManager.on('story_generation_started', handleStoryGenerationStarted);
     socketManager.on('story_machine_init', handleStoryMachineInit);
     socketManager.on('feedback_progress_update', handleFeedbackProgressUpdate);
     socketManager.on('chapter_ready', handleChapterReady);
@@ -211,6 +213,117 @@ export const GameProvider = ({ children }) => {
       socketManager.off('chapter_ready', handleChapterReady);
     };
   }, []);
+
+  // 保存房间和故事信息到 localStorage
+  useEffect(() => {
+    if (room) {
+      localStorage.setItem('storyweaver_room', JSON.stringify(room));
+    }
+  }, [room]);
+
+  useEffect(() => {
+    if (story) {
+      localStorage.setItem('storyweaver_story', JSON.stringify(story));
+    }
+  }, [story]);
+
+  // 刷新页面后自动重新加入房间
+  useEffect(() => {
+    const savedRoom = localStorage.getItem('storyweaver_room');
+    const savedPlayer = localStorage.getItem('storyweaver_player');
+    
+    if (savedRoom && savedPlayer && socketConnected && !isRejoining) {
+      const roomData = JSON.parse(savedRoom);
+      const playerData = JSON.parse(savedPlayer);
+      
+      // 自动重新加入房间
+      setIsRejoining(true);
+      console.log('刷新页面后自动重新加入房间:', roomData.id);
+      
+      socketManager.emit('join_room', {
+        roomId: roomData.id,
+        playerId: playerData.id,
+        username: playerData.username
+      }, (response) => {
+        setIsRejoining(false);
+        if (response.error) {
+          console.error('重新加入房间失败:', response.error);
+          // 如果房间不存在了，清理 localStorage
+          if (response.code === 'ROOM_NOT_FOUND') {
+            localStorage.removeItem('storyweaver_room');
+            localStorage.removeItem('storyweaver_story');
+            setRoom(null);
+            setStory(null);
+          }
+        } else {
+          console.log('成功重新加入房间');
+          setRoom(response.room);
+          if (response.room.story) {
+            setStory(response.room.story);
+          }
+          
+          // 加载消息历史
+          socketManager.emit('get_messages', {}, (msgResponse) => {
+            if (msgResponse && msgResponse.success && msgResponse.messages) {
+              console.log('重新加载消息历史:', msgResponse.messages.length, '条消息');
+              
+              // 转换消息格式并分类
+              const formattedMessages = msgResponse.messages.map(msg => {
+                if (msg.type === 'chapter' && msg.author) {
+                  return {
+                    id: msg.id,
+                    type: msg.type,
+                    visibility: msg.visibility || 'global',
+                    sender: msg.sender || 'AI',
+                    senderId: msg.senderId || 'ai',
+                    author: msg.author,
+                    recipientId: msg.recipientId,
+                    recipientName: msg.recipientName,
+                    content: msg.content,
+                    timestamp: msg.timestamp instanceof Date ? msg.timestamp : new Date(msg.timestamp),
+                    chapterNumber: msg.chapterNumber,
+                    isPrivate: false
+                  };
+                }
+                
+                return {
+                  id: msg.id,
+                  type: msg.type,
+                  visibility: msg.visibility,
+                  sender: msg.sender,
+                  senderId: msg.senderId,
+                  recipientId: msg.recipientId,
+                  recipientName: msg.recipientName,
+                  content: msg.content,
+                  timestamp: msg.timestamp instanceof Date ? msg.timestamp : new Date(msg.timestamp),
+                  chapterNumber: msg.chapterNumber,
+                  isPrivate: msg.isPrivate
+                };
+              });
+              
+              // 分离故事机消息和主消息
+              const storyMachineMsgs = formattedMessages.filter(m => 
+                (m.type === 'private' || m.type === 'story_machine') && 
+                (m.visibility === 'private' || m.senderId === 'ai') &&
+                m.type !== 'chapter'
+              );
+              
+              const mainMsgs = formattedMessages.filter(m => 
+                m.type === 'global' || 
+                m.type === 'chapter' || 
+                m.type === 'ai' || 
+                m.type === 'system' ||
+                (m.type !== 'private' && m.type !== 'story_machine')
+              );
+              
+              setMessages(mainMsgs);
+              setStoryMachineMessages(storyMachineMsgs);
+            }
+          });
+        }
+      });
+    }
+  }, [socketConnected, isRejoining]);
 
   // 保存玩家信息
   const savePlayer = useCallback((playerData) => {
@@ -401,7 +514,15 @@ export const GameProvider = ({ children }) => {
       timestamp: new Date(),
       isPrivate: messageType === 'private'
     };
-    setMessages(prev => [...prev, playerMessage]);
+    
+    // 根据消息类型添加到不同的列表
+    if (messageType === 'private') {
+      // 私聊消息添加到故事机消息列表
+      setStoryMachineMessages(prev => [...prev, playerMessage]);
+    } else {
+      // 其他消息添加到主消息列表
+      setMessages(prev => [...prev, playerMessage]);
+    }
     
     setLoading(true);
     
@@ -419,12 +540,20 @@ export const GameProvider = ({ children }) => {
         setError(errorMsg);
         console.error('发送消息失败:', errorMsg);
         // 移除临时消息（如果失败）
-        setMessages(prev => prev.filter(m => m.id !== tempMessageId));
+        if (messageType === 'private') {
+          setStoryMachineMessages(prev => prev.filter(m => m.id !== tempMessageId));
+        } else {
+          setMessages(prev => prev.filter(m => m.id !== tempMessageId));
+        }
         return;
       }
       
       // 成功：移除临时消息（服务器会通过new_message事件发送正式消息）
-      setMessages(prev => prev.filter(m => m.id !== tempMessageId));
+      if (messageType === 'private') {
+        setStoryMachineMessages(prev => prev.filter(m => m.id !== tempMessageId));
+      } else {
+        setMessages(prev => prev.filter(m => m.id !== tempMessageId));
+      }
       
       // 更新房间和故事
       if (response.room) {
@@ -441,7 +570,11 @@ export const GameProvider = ({ children }) => {
     setRoom(null);
     setStory(null);
     setMessages([]);
+    setStoryMachineMessages([]);
     setError(null);
+    // 清理 localStorage 中的房间和故事信息
+    localStorage.removeItem('storyweaver_room');
+    localStorage.removeItem('storyweaver_story');
   }, []);
 
   const value = {

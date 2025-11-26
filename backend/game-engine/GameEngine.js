@@ -570,7 +570,7 @@ class GameEngine {
         throw new Error('没有当前章节');
       }
       
-      // 获取章节TODO列表
+      // 获取章节TODO列表（包含预期答案）
       const todos = await database.getChapterTodos(currentChapter.id);
       
       // 评估玩家反馈
@@ -582,8 +582,8 @@ class GameEngine {
         room.story
       );
       
-      // 调用故事机专用方法生成响应
-      storyMachineResponse = await AIService.generateStoryMachineResponse(context, message, playerId);
+      // 调用故事机专用方法生成响应，传入 TODO 列表用于智能答案评估
+      storyMachineResponse = await AIService.generateStoryMachineResponse(context, message, playerId, todos);
       
       // 创建故事机AI响应消息
       const storyMachineMessageId = uuidv4();

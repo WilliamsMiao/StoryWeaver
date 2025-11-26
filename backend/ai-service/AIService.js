@@ -169,7 +169,7 @@ class AIService {
    * @param {string} chapterContent - 章节内容
    * @param {Object} storyContext - 故事上下文 {title, background, currentChapter}
    * @param {Object} options - 选项
-   * @returns {Promise<Array>} TODO列表 [{id, content, priority}]
+   * @returns {Promise<Array>} TODO列表 [{id, content, expected_answer, hint, priority}]
    */
   async generateChapterTodos(chapterContent, storyContext, options = {}) {
     if (!this.provider) {
@@ -179,39 +179,55 @@ class AIService {
     
     const startTime = Date.now();
     
-    // 构建TODO生成提示词 - 剧本杀专用
-    const systemPrompt = `你是一个剧本杀游戏分析助手，负责根据章节内容生成案件调查TODO列表。
+    // 构建TODO生成提示词 - 剧本杀专用，带预期答案
+    const systemPrompt = `你是一个剧本杀游戏设计师，负责根据章节内容生成调查问题和预期答案。
 
-这是一个多人协作的剧本杀游戏，你需要：
-1. 分析章节内容，识别关键线索、疑点和待解谜团
-2. 生成3-5个TODO项，每个TODO项是故事机需要引导玩家调查或讨论的方向
-3. TODO项应围绕：
-   - 案件核心疑点（动机、手法、嫌疑人）
-   - 人物关系中的矛盾点
-   - 需要收集的关键证据
-   - 玩家角色可能隐藏的秘密
-   - 推进剧情的关键抉择
-4. 每个TODO项应该具体明确，能够指导故事机与玩家展开互动
+这是一个多人协作的剧本杀游戏。你需要为故事机设计引导性问题，每个问题都有预设的"正确方向"，
+这样故事机可以根据玩家的回答判断是否接近真相，并给出引导。
+
+## 设计要求：
+1. 分析章节内容，提取关键线索和疑点
+2. 设计3-5个调查问题，每个问题都有：
+   - 问题内容（引导玩家思考的方向）
+   - 预期答案（玩家应该发现的关键信息或正确推理）
+   - 提示语（如果玩家答错，可以给出的引导）
+3. 问题应围绕：案件核心、人物关系、关键证据、时间线、动机分析
 
 故事背景：
 标题：${storyContext.title || '未命名故事'}
 背景：${storyContext.background || '无'}
 
-请生成TODO列表，格式为JSON数组，每个元素包含：
-- content: TODO项内容（围绕剧本杀调查方向）
-- priority: 优先级（1-5，5为最高）
-
-返回格式示例：
+## 返回格式（JSON数组）：
 [
-  {"content": "引导玩家调查受害者最后接触的人物", "priority": 5},
-  {"content": "询问玩家角色在案发时间的不在场证明", "priority": 4},
-  {"content": "收集玩家对嫌疑人动机的推理", "priority": 3}
+  {
+    "content": "问题内容（故事机会向玩家提问的内容）",
+    "expected_answer": "预期答案（关键词或核心信息，用于判断玩家是否答对）",
+    "hint": "提示语（玩家答错时的引导，不直接揭示答案）",
+    "priority": 5
+  }
+]
+
+## 示例：
+[
+  {
+    "content": "你注意到书房里有什么异常吗？",
+    "expected_answer": "书架上的书顺序被动过|有一本书放反了|灰尘痕迹不对",
+    "hint": "仔细观察书架，有些东西和之前不太一样...",
+    "priority": 5
+  },
+  {
+    "content": "管家说他一直在厨房，但你怎么看？",
+    "expected_answer": "他在撒谎|他的衣服有泥土|他提到的时间不对",
+    "hint": "回想一下他的衣着和他说的话...",
+    "priority": 4
+  }
 ]`;
     
     const userPrompt = `章节内容：
 ${chapterContent}
 
-请分析这个剧本杀章节，生成3-5个案件调查TODO项。只返回JSON数组，不要其他文字。`;
+请分析这个剧本杀章节，生成3-5个调查问题。每个问题必须包含content、expected_answer、hint和priority。
+只返回JSON数组，不要其他文字。`;
     
     try {
       const response = await this.requestQueue.enqueue(
@@ -220,11 +236,11 @@ ${chapterContent}
           { role: 'user', content: userPrompt }
         ], {
           temperature: 0.7,
-          max_tokens: 500
+          max_tokens: 800
         }),
         {
           priority: options.priority || 2,
-          timeout: options.timeout || 20000
+          timeout: options.timeout || 25000
         }
       );
       
@@ -238,11 +254,26 @@ ${chapterContent}
         todos = JSON.parse(jsonStr);
       } catch (parseError) {
         console.error('解析TODO列表失败，使用默认生成:', parseError);
-        // 如果解析失败，生成默认TODO
+        // 如果解析失败，生成默认TODO（带预期答案）
         todos = [
-          { content: '了解玩家对本章节关键事件的看法', priority: 5 },
-          { content: '收集玩家对角色行为的反馈', priority: 4 },
-          { content: '询问玩家对情节发展的理解', priority: 3 }
+          { 
+            content: '你在现场发现了什么可疑的东西？', 
+            expected_answer: '血迹|指纹|脚印|凶器',
+            hint: '仔细观察现场周围，不要放过任何细节...',
+            priority: 5 
+          },
+          { 
+            content: '你认为谁最有作案动机？', 
+            expected_answer: '矛盾|利益|仇恨|嫉妒',
+            hint: '想想谁和受害者有过节...',
+            priority: 4 
+          },
+          { 
+            content: '案发时你在哪里？有人可以证明吗？', 
+            expected_answer: '不在场证明|证人|时间',
+            hint: '回忆一下当时的情况...',
+            priority: 3 
+          }
         ];
       }
       
@@ -250,8 +281,18 @@ ${chapterContent}
       if (todos.length < 3) {
         // 补充默认TODO - 剧本杀相关
         const defaultTodos = [
-          { content: '引导玩家分析案件中的可疑之处', priority: 2 },
-          { content: '询问玩家角色与案件的关联', priority: 1 }
+          { 
+            content: '这个案件中有什么让你感到奇怪的地方？', 
+            expected_answer: '矛盾|不合理|可疑',
+            hint: '有些事情看起来不太对劲...',
+            priority: 2 
+          },
+          { 
+            content: '你和其他人是什么关系？', 
+            expected_answer: '认识|关系|秘密',
+            hint: '人与人之间的关系往往隐藏着秘密...',
+            priority: 1 
+          }
         ];
         todos = [...todos, ...defaultTodos.slice(0, 3 - todos.length)];
       } else if (todos.length > 5) {
@@ -262,28 +303,48 @@ ${chapterContent}
       const { v4: uuidv4 } = await import('uuid');
       return todos.map((todo, index) => ({
         id: `todo_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 9)}`,
-        content: todo.content || `TODO项 ${index + 1}`,
+        content: todo.content || `调查问题 ${index + 1}`,
+        expected_answer: todo.expected_answer || null,
+        hint: todo.hint || null,
         priority: todo.priority || (5 - index) // 默认优先级递减
       }));
       
     } catch (error) {
       console.error('生成TODO列表失败:', error);
-      // 返回默认TODO列表 - 剧本杀相关
+      // 返回默认TODO列表 - 剧本杀相关（带预期答案）
       const { v4: uuidv4 } = await import('uuid');
       return [
-        { id: `todo_${Date.now()}_0`, content: '引导玩家收集并分析现有线索', priority: 5 },
-        { id: `todo_${Date.now()}_1`, content: '询问玩家角色的不在场证明和动机', priority: 4 },
-        { id: `todo_${Date.now()}_2`, content: '推动玩家对嫌疑人的推理讨论', priority: 3 }
+        { 
+          id: `todo_${Date.now()}_0`, 
+          content: '现场有什么重要的线索被忽视了？', 
+          expected_answer: '痕迹|物证|证据',
+          hint: '再仔细看看现场...',
+          priority: 5 
+        },
+        { 
+          id: `todo_${Date.now()}_1`, 
+          content: '谁的证词存在矛盾？', 
+          expected_answer: '说谎|不一致|矛盾',
+          hint: '对比一下大家的说法...',
+          priority: 4 
+        },
+        { 
+          id: `todo_${Date.now()}_2`, 
+          content: '你有什么不想让别人知道的秘密吗？', 
+          expected_answer: '秘密|隐瞒|真相',
+          hint: '每个人都有不可告人的秘密...',
+          priority: 3 
+        }
       ];
     }
   }
   
   /**
-   * 生成故事机响应（玩家与AI的私密对话）
+   * 生成故事机响应（基于TODO预期答案的智能引导）
    * @param {Object} context - 完整上下文
    * @param {string} playerInput - 玩家输入
    * @param {string} playerId - 玩家ID
-   * @param {Object} options - 选项
+   * @param {Object} options - 选项 { currentTodo, allTodos }
    * @returns {Promise<Object>} 标准化响应
    */
   async generateStoryMachineResponse(context, playerInput, playerId, options = {}) {
@@ -293,31 +354,67 @@ ${chapterContent}
     await this.ensureProviderAvailability();
     
     const startTime = Date.now();
+    const { currentTodo, allTodos = [] } = options;
     
-    // 构建故事机专用提示词 - 剧本杀专用
-    const systemPrompt = `你是一个剧本杀游戏中的"故事机"，扮演神秘的案件知情者角色。
-
-你的职责：
-1. 为每位玩家提供独属于其角色的秘密线索和背景信息
-2. 根据玩家的调查方向，适时透露关键证据
-3. 收集玩家的推理反馈，判断其是否接近真相
-4. 引导玩家发现被忽视的重要细节
-5. 营造悬疑紧张的氛围，但不直接揭露凶手
-
-回应风格：
-- 保持神秘感，像一个知道真相但不能直说的叙述者
-- 用暗示和引导代替直接回答
-- 适度给出线索，避免让调查太简单或太难
-- 根据玩家角色身份，给予不同视角的信息
-
-当前案件：${context.title || '未命名案件'}
-案件背景：${context.background || '无'}
-
-请以神秘而有帮助的方式回应玩家，帮助其角色深入案件调查。`;
+    // 判断玩家回答是否匹配预期答案
+    let answerMatchResult = null;
+    if (currentTodo && currentTodo.expected_answer) {
+      answerMatchResult = this.evaluatePlayerAnswer(playerInput, currentTodo.expected_answer);
+    }
     
+    // 构建故事机专用提示词 - 基于预期答案引导
+    let systemPrompt = `你是一个剧本杀游戏中的"故事机"，扮演神秘的案件知情者角色。
+
+## 你的核心职责：
+1. 向玩家提出调查问题，收集他们的推理和发现
+2. 根据玩家的回答，判断他们是否接近真相
+3. 如果玩家回答正确或接近正确，给予肯定并透露更多线索
+4. 如果玩家回答偏离方向，用暗示引导他们回到正确轨道
+5. 保持神秘感，永远不直接揭露答案
+
+## 当前案件信息：
+- 案件名称：${context.title || '未命名案件'}
+- 案件背景：${context.background || '无'}
+`;
+
+    // 如果有当前 TODO，添加相关信息
+    if (currentTodo) {
+      systemPrompt += `
+## 当前调查问题：
+- 问题：${currentTodo.content}
+- 预期答案关键词：${currentTodo.expected_answer || '无'}
+- 引导提示：${currentTodo.hint || '无'}
+
+## 玩家回答评估：
+`;
+      if (answerMatchResult) {
+        if (answerMatchResult.isCorrect) {
+          systemPrompt += `玩家的回答**接近正确**！匹配到关键词：${answerMatchResult.matchedKeywords.join('、')}
+请：
+1. 肯定玩家的发现（"你注意到了关键的地方..."）
+2. 透露一条新的线索或信息作为奖励
+3. 引导到下一个调查方向`;
+        } else {
+          systemPrompt += `玩家的回答**偏离方向**。
+请：
+1. 不要直接否定，用委婉的方式引导
+2. 给出提示：${currentTodo.hint || '试着从不同角度思考...'}
+3. 暗示正确的方向，但不要直接说出答案`;
+        }
+      }
+    }
+
+    systemPrompt += `
+
+## 回应风格：
+- 神秘而富有暗示性
+- 用"也许..."、"你有没有注意到..."、"有趣的想法..."等引导语
+- 回复控制在80-150字
+- 结尾可以抛出新问题继续引导`;
+
     const userPrompt = `玩家说：${playerInput}
 
-请根据案件背景和当前调查进度，为这位玩家提供独属于其角色的线索或收集其推理反馈。`;
+请根据上述分析生成回复。`;
     
     try {
       const response = await this.requestQueue.enqueue(
@@ -335,14 +432,44 @@ ${chapterContent}
       );
       
       const duration = Date.now() - startTime;
-      return this.standardizeResponse(response, {
+      const result = this.standardizeResponse(response, {
         duration,
         success: true
       });
+      
+      // 附加答案评估结果
+      result.answerEvaluation = answerMatchResult;
+      
+      return result;
     } catch (error) {
       const duration = Date.now() - startTime;
       throw this.standardizeError(error, duration);
     }
+  }
+  
+  /**
+   * 评估玩家回答是否匹配预期答案
+   * @param {string} playerAnswer - 玩家回答
+   * @param {string} expectedAnswer - 预期答案（用|分隔的关键词）
+   * @returns {Object} { isCorrect, matchedKeywords, confidence }
+   */
+  evaluatePlayerAnswer(playerAnswer, expectedAnswer) {
+    if (!expectedAnswer) {
+      return { isCorrect: false, matchedKeywords: [], confidence: 0 };
+    }
+    
+    const answerLower = playerAnswer.toLowerCase();
+    const keywords = expectedAnswer.split('|').map(k => k.trim().toLowerCase());
+    const matchedKeywords = keywords.filter(keyword => answerLower.includes(keyword));
+    
+    const isCorrect = matchedKeywords.length > 0;
+    const confidence = matchedKeywords.length / keywords.length;
+    
+    return {
+      isCorrect,
+      matchedKeywords,
+      confidence
+    };
   }
   
   /**

@@ -383,6 +383,12 @@ class StoryWeaverServer {
             }
           }
           
+          // 处理故事机回复消息（私聊模式）
+          if (result.storyMachineMessage) {
+            // 发送故事机AI回复给玩家
+            socket.emit('new_message', result.storyMachineMessage);
+          }
+          
           // 如果有AI生成的章节，广播给所有玩家
           if (result.chapter && messageType === 'global') {
             io.to(roomId).emit('new_chapter', {

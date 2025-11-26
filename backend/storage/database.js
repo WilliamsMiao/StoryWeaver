@@ -221,13 +221,15 @@ class Database {
       )
     `);
     
-    // 章节TODO表
+    // 章节TODO表 - 包含预期答案/线索用于引导玩家
     await this.db.run(`
       CREATE TABLE IF NOT EXISTS chapter_todos (
         id TEXT PRIMARY KEY,
         chapter_id TEXT NOT NULL,
         story_id TEXT NOT NULL,
         content TEXT NOT NULL,
+        expected_answer TEXT,
+        hint TEXT,
         status TEXT DEFAULT 'pending',
         priority INTEGER DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -887,7 +889,7 @@ class Database {
   /**
    * 创建章节TODO列表
    * @param {string} chapterId - 章节ID
-   * @param {Array} todos - TODO项数组 [{id, content, priority}]
+   * @param {Array} todos - TODO项数组 [{id, content, expected_answer, hint, priority}]
    */
   async createChapterTodos(chapterId, todos) {
     // 先获取story_id
@@ -898,8 +900,8 @@ class Database {
     
     for (const todo of todos) {
       await this.db.run(
-        'INSERT INTO chapter_todos (id, chapter_id, story_id, content, status, priority) VALUES (?, ?, ?, ?, ?, ?)',
-        [todo.id, chapterId, chapter.story_id, todo.content, 'pending', todo.priority || 1]
+        'INSERT INTO chapter_todos (id, chapter_id, story_id, content, expected_answer, hint, status, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [todo.id, chapterId, chapter.story_id, todo.content, todo.expected_answer || null, todo.hint || null, 'pending', todo.priority || 1]
       );
     }
   }
