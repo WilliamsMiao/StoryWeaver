@@ -1088,7 +1088,8 @@ ${playerRoles.map(r => `- ${r.characterName}（${r.occupation}）: ${r.personalG
       puzzleQuestion: puzzle.question,
       correctAnswer: puzzle.correct_answer,
       answerKeywords: puzzle.answer_keywords,
-      difficulty: puzzle.difficulty || 3
+      difficulty: puzzle.difficulty || 3,
+      nextSteps: puzzle.next_steps || ''
     });
     console.log(`[故事机初始化] 谜题已保存，ID: ${puzzleId}`);
     
@@ -1320,6 +1321,9 @@ ${playerRoles.map(r => `- ${r.characterName}（${r.occupation}）: ${r.personalG
       throw new Error('当前章节不存在');
     }
     
+    // 获取谜题信息以包含在推进消息中
+    const puzzle = await database.getChapterPuzzle(currentChapterId);
+    
     // 生成下一章节
     const nextChapter = await this.generateNextChapter(story, currentChapter);
     
@@ -1333,7 +1337,12 @@ ${playerRoles.map(r => `- ${r.characterName}（${r.occupation}）: ${r.personalG
     return {
       ready: true,
       newChapter: nextChapter,
-      interactionResult
+      interactionResult,
+      puzzleInfo: puzzle ? {
+        question: puzzle.puzzle_question,
+        correctAnswer: puzzle.correct_answer,
+        nextSteps: puzzle.next_steps
+      } : null
     };
   }
   

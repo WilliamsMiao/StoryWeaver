@@ -248,6 +248,7 @@ class Database {
         correct_answer TEXT NOT NULL,
         answer_keywords TEXT,
         difficulty INTEGER DEFAULT 3,
+        next_steps TEXT,
         solved INTEGER DEFAULT 0,
         solved_by TEXT,
         solved_at DATETIME,
@@ -1266,11 +1267,11 @@ class Database {
    * @param {Object} puzzle - 谜题数据
    */
   async createChapterPuzzle(puzzle) {
-    const { id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty = 3 } = puzzle;
+    const { id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty = 3, nextSteps = '' } = puzzle;
     await this.db.run(
-      `INSERT INTO chapter_puzzles (id, chapter_id, story_id, puzzle_question, correct_answer, answer_keywords, difficulty)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty]
+      `INSERT INTO chapter_puzzles (id, chapter_id, story_id, puzzle_question, correct_answer, answer_keywords, difficulty, next_steps)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty, nextSteps]
     );
   }
 

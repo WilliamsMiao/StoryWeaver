@@ -586,15 +586,26 @@ class StoryWeaverServer {
           
           // 处理章节推进结果（所有玩家解开谜题后）
           if (result.progressionResult && result.progressionResult.ready) {
-            const { newChapter, interactionResult } = result.progressionResult;
+            const { newChapter, interactionResult, puzzleInfo } = result.progressionResult;
             
             console.log(`[章节推进广播] 所有玩家解开谜题，推进到第 ${newChapter.chapterNumber} 章`);
             
-            // 1. 先广播解谜成功消息
+            // 1. 先广播解谜成功消息（包含答案和下一步指示）
+            let successMessage = '🎉 恭喜！所有玩家都成功解开了本章谜题！\n\n';
+            if (puzzleInfo) {
+              successMessage += `✅ **谜题**：${puzzleInfo.question}\n`;
+              successMessage += `🎯 **正确答案**：${puzzleInfo.correctAnswer}\n\n`;
+              if (puzzleInfo.nextSteps) {
+                successMessage += `📍 **下一步行动**：${puzzleInfo.nextSteps}\n\n`;
+              }
+            }
+            successMessage += '📖 故事将继续发展，新的章节即将展开...';
+            
             io.to(roomId).emit('puzzle_all_solved', {
-              message: '🎉 恭喜！所有玩家都成功解开了本章谜题！',
+              message: successMessage,
               chapterNumber: newChapter.chapterNumber - 1,
-              nextChapterNumber: newChapter.chapterNumber
+              nextChapterNumber: newChapter.chapterNumber,
+              puzzleInfo: puzzleInfo
             });
             
             // 2. 广播新章节
