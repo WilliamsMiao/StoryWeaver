@@ -738,8 +738,9 @@ ${chapterContent.substring(0, 1000)}
     const answerMatch = correctAnswerParts.filter(p => answerLower.includes(p)).length / Math.max(correctAnswerParts.length, 1);
     
     // 提高正确判断的阈值，确保答案更加准确
+    // 使用70%作为阈值，确保答案包含足够的关键信息以保证唯一性
     const confidence = (keywordMatch * 0.7 + answerMatch * 0.3);
-    const isCorrect = confidence >= 0.7; // 提高到70%匹配度视为正确，确保答案唯一性
+    const isCorrect = confidence >= 0.7; // 70%匹配度，确保答案唯一且可验证
 
     let feedback = '';
     let nextSteps = puzzle.next_steps || '';
