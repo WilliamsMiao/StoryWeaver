@@ -88,7 +88,9 @@ services:
     container_name: storyweaver-static-init
     volumes:
       - storyweaver-static:/output
-    command: sh -c "cp -r /app/frontend/dist/* /output/ && echo 'Static files copied successfully'"
+      # 挂载前端源代码，使用最新的代码进行构建
+      - ./frontend:/app/frontend
+    command: sh -c "cd /app/frontend && npm install --silent && npm run build && cp -r dist/* /output/ && echo 'Static files built and copied successfully'"
     networks:
       - storyweaver-network
 
