@@ -14,6 +14,7 @@ class StoryWeaverServer {
   constructor() {
     this.app = express();
     this.httpServer = createServer(this.app);
+    // CI/CD测试: 代码更新测试
     
     // Socket.io 配置（生产环境优化）
     const socketioConfig = config.socketio || {
