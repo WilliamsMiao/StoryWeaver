@@ -5,19 +5,54 @@ on:
     branches:
       - main
       - master
-  pull_request:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 env:
   DOCKER_IMAGE: storyweaver
   DOCKER_TAG: latest
+  SERVER_HOST: ec2-13-250-179-235.ap-southeast-1.compute.amazonaws.com
+  SERVER_USER: ubuntu
+  REMOTE_DIR: ~/storyweaver
 
 jobs:
-  build:
+  detect-changes:
     runs-on: ubuntu-latest
+    outputs:
+      deploy-type: ${{ steps.detect.outputs.deploy-type }}
+      changed-files: ${{ steps.detect.outputs.changed-files }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2  # 需要获取至少2个commit以进行比较
+      
+      - name: Detect changes
+        id: detect
+        run: |
+          chmod +x scripts/detect-changes.sh
+          DEPLOY_TYPE=$(./scripts/detect-changes.sh HEAD~1 HEAD | grep "^DEPLOY_TYPE=" | cut -d'=' -f2)
+          echo "deploy-type=$DEPLOY_TYPE" >> $GITHUB_OUTPUT
+          
+          # 如果是首次提交或无法比较，默认使用docker部署
+          if [ -z "$DEPLOY_TYPE" ] || [ "$DEPLOY_TYPE" = "skip" ]; then
+            echo "deploy-type=docker" >> $GITHUB_OUTPUT
+          fi
+          
+          # 获取变更文件列表
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          echo "changed-files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          echo "检测结果: $DEPLOY_TYPE"
+          echo "变更文件:"
+          echo "$CHANGED_FILES"
+
+  build-docker:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.deploy-type == 'docker'
     
     steps:
       - name: Checkout code
@@ -27,7 +62,7 @@ jobs:
         uses: docker/setup-buildx-action@v2
       
       - name: Login to Docker Hub
-        if: github.event_name != 'pull_request'
+        if: env.DOCKER_USERNAME != ''
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -40,9 +75,6 @@ jobs:
           images: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
       
@@ -51,32 +83,146 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ secrets.DOCKER_USERNAME != '' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
+
+  deploy-rsync:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.deploy-type == 'rsync'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
       
-      - name: Image digest
-        run: echo ${{ steps.meta.outputs.digest }}
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_KEY }}
+      
+      - name: Add server to known hosts
+        run: |
+          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Deploy via rsync
+        run: |
+          rsync -avz --progress \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            --exclude 'node_modules' \
+            --exclude '.git' \
+            --exclude 'data/*.db*' \
+            --exclude 'frontend/node_modules' \
+            --exclude 'frontend/dist' \
+            --exclude '.env' \
+            --exclude 'NUMA.pem' \
+            --exclude '*.log' \
+            ./ ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:${{ env.REMOTE_DIR }}/
+      
+      - name: Restart services
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
+            cd ${{ env.REMOTE_DIR }}
+            docker compose restart storyweaver-app
+            sleep 5
+            docker compose ps
+          EOF
+      
+      - name: Health check
+        run: |
+          sleep 5
+          curl -f http://${{ env.SERVER_HOST }}/health || exit 1
 
-  # 可选：部署到服务器
-  # deploy:
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-  #   
-  #   steps:
-  #     - name: Deploy to server
-  #       uses: appleboy/ssh-action@master
-  #       with:
-  #         host: ${{ secrets.SSH_HOST }}
-  #         username: ${{ secrets.SSH_USER }}
-  #         key: ${{ secrets.SSH_KEY }}
-  #         script: |
-  #           cd /opt/storyweaver
-  #           docker-compose pull
-  #           docker-compose up -d
-  #           docker-compose exec -T storyweaver-app node -e "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+  deploy-docker:
+    needs: [detect-changes, build-docker]
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.deploy-type == 'docker' && (needs.build-docker.result == 'success' || needs.build-docker.result == 'skipped')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_KEY }}
+      
+      - name: Add server to known hosts
+        run: |
+          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Deploy via Docker
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
+            cd ${{ env.REMOTE_DIR }}
+            
+            # 如果使用Docker Hub，拉取最新镜像
+            if [ -n "${{ secrets.DOCKER_USERNAME }}" ]; then
+              docker compose pull storyweaver-app || true
+            fi
+            
+            # 重新构建并启动
+            docker compose build --no-cache storyweaver-app
+            docker compose up -d
+            
+            # 等待服务启动
+            sleep 10
+            docker compose ps
+          EOF
+      
+      - name: Health check
+        run: |
+          sleep 10
+          for i in {1..10}; do
+            if curl -f http://${{ env.SERVER_HOST }}/health; then
+              echo "健康检查通过"
+              exit 0
+            fi
+            echo "等待服务启动... ($i/10)"
+            sleep 5
+          done
+          echo "健康检查失败"
+          exit 1
 
+  deploy-fallback:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    if: needs.detect-changes.outputs.deploy-type == 'docker' && needs.build-docker.result != 'success' && needs.build-docker.result != 'skipped'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_KEY }}
+      
+      - name: Add server to known hosts
+        run: |
+          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts
+      
+      - name: Fallback to rsync deployment
+        run: |
+          echo "Docker构建失败，回退到rsync部署"
+          rsync -avz --progress \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            --exclude 'node_modules' \
+            --exclude '.git' \
+            --exclude 'data/*.db*' \
+            --exclude 'frontend/node_modules' \
+            --exclude 'frontend/dist' \
+            --exclude '.env' \
+            --exclude 'NUMA.pem' \
+            --exclude '*.log' \
+            ./ ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:${{ env.REMOTE_DIR }}/
+          
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
+            cd ${{ env.REMOTE_DIR }}
+            docker compose restart storyweaver-app
+            sleep 5
+            docker compose ps
+          EOF

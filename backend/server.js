@@ -366,17 +366,16 @@ class StoryWeaverServer {
             
             // 根据可见性发送给相应客户端
             if (visibility === 'global') {
-              // 全局消息：发送给房间内所有玩家
-              io.to(roomId).emit('new_message', messageData);
+              // 全局消息：广播给房间内其他玩家（不包括发送者，因为发送者前端已添加临时消息）
+              socket.broadcast.to(roomId).emit('new_message', messageData);
             } else if (visibility === 'private') {
-              // 私密消息：只发送给发送者
-              socket.emit('new_message', messageData);
+              // 私密消息（故事机模式）：只发送给发送者自己（确认消息已收到）
+              // 注意：发送者前端已添加临时消息，这里不需要再发送
             } else if (visibility === 'direct') {
-              // 玩家间消息：发送给发送者和接收者
+              // 玩家间私聊消息：只发送给接收者（发送者前端已添加临时消息）
               const recipientSocket = Array.from(io.sockets.sockets.values())
                 .find(s => s.data.playerId === recipientId && s.data.roomId === roomId);
               
-              socket.emit('new_message', messageData);
               if (recipientSocket) {
                 recipientSocket.emit('new_message', messageData);
               }
@@ -385,8 +384,12 @@ class StoryWeaverServer {
           
           // 处理故事机回复消息（私聊模式）
           if (result.storyMachineMessage) {
+            console.log(`[发送故事机消息] 准备发送故事机消息给玩家 ${playerId}, 消息ID: ${result.storyMachineMessage.id}`);
             // 发送故事机AI回复给玩家
             socket.emit('new_message', result.storyMachineMessage);
+            console.log(`[发送故事机消息] 故事机消息已发送`);
+          } else {
+            console.log(`[发送故事机消息] 警告: result.storyMachineMessage 不存在，消息类型: ${messageType}`);
           }
           
           // 如果有AI生成的章节，广播给所有玩家

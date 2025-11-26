@@ -564,14 +564,19 @@ class GameEngine {
       
     } else if (messageType === 'private') {
       // 故事机模式：AI主动更新信息并收取反馈
+      console.log(`[私聊消息处理] 开始处理私聊消息，玩家ID: ${playerId}, 房间ID: ${roomId}`);
+      
       // 获取当前章节
       const currentChapter = this.getCurrentChapter(room.story);
       if (!currentChapter) {
+        console.error(`[私聊消息处理] 错误: 没有当前章节，房间ID: ${roomId}`);
         throw new Error('没有当前章节');
       }
+      console.log(`[私聊消息处理] 当前章节: ${currentChapter.chapterNumber}, 章节ID: ${currentChapter.id}`);
       
       // 获取章节TODO列表（包含预期答案）
       const todos = await database.getChapterTodos(currentChapter.id);
+      console.log(`[私聊消息处理] 获取到 ${todos.length} 个TODO项`);
       
       // 评估玩家反馈
       const feedbackResult = await this.evaluateFeedback(
@@ -581,9 +586,17 @@ class GameEngine {
         todos,
         room.story
       );
+      console.log(`[私聊消息处理] 反馈评估完成`);
       
       // 调用故事机专用方法生成响应，传入 TODO 列表用于智能答案评估
-      storyMachineResponse = await AIService.generateStoryMachineResponse(context, message, playerId, todos);
+      console.log(`[私聊消息处理] 开始调用AI生成响应...`);
+      try {
+        storyMachineResponse = await AIService.generateStoryMachineResponse(context, message, playerId, todos);
+        console.log(`[私聊消息处理] AI响应生成成功，内容长度: ${storyMachineResponse?.content?.length || 0}`);
+      } catch (error) {
+        console.error(`[私聊消息处理] AI响应生成失败:`, error.message, error.stack);
+        throw error;
+      }
       
       // 创建故事机AI响应消息
       const storyMachineMessageId = uuidv4();
@@ -603,6 +616,7 @@ class GameEngine {
       };
       
       // 保存故事机消息到数据库
+      console.log(`[私聊消息处理] 保存故事机消息到数据库，消息ID: ${storyMachineMessageId}`);
       await database.createMessage({
         id: storyMachineMessageId,
         roomId: roomId,
@@ -616,9 +630,12 @@ class GameEngine {
         content: storyMachineResponse.content,
         chapterNumber: currentChapter.chapterNumber
       });
+      console.log(`[私聊消息处理] 故事机消息已保存到数据库`);
       
       // 检查是否所有玩家都达到80%完成度
       const progressionResult = await this.checkChapterProgression(currentChapter.id, roomId);
+      
+      console.log(`[私聊消息处理] 处理完成，返回结果，storyMachineMessage存在: ${!!storyMachineMessage}`);
       
       return {
         message: createdMessage,

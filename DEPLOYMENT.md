@@ -567,6 +567,28 @@ deploy:2. 使用共享数据库（迁移到 PostgreSQL/MySQL）
 
 ---
 
+## 🤖 CI/CD 自动部署
+
+项目已配置GitHub Actions CI/CD流程，支持自动部署到AWS服务器。
+
+### 快速开始
+
+1. **配置GitHub Secrets**（在仓库 Settings → Secrets and variables → Actions）：
+   - `SSH_KEY`: NUMA.pem文件的完整内容
+   - `DOCKER_USERNAME`: Docker Hub用户名（可选）
+   - `DOCKER_PASSWORD`: Docker Hub密码（可选）
+
+2. **推送代码**：推送到 `main` 分支即可自动触发部署
+
+### 部署策略
+
+- **代码更新**：仅代码文件变更时，使用rsync快速同步并重启服务
+- **重大更新**：Dockerfile或依赖变更时，自动构建Docker镜像并完整部署
+
+### 详细文档
+
+完整的CI/CD设置和使用说明请参考 [CICD_SETUP.md](./CICD_SETUP.md)
+
 ## 📞 支持
 
 如有问题，请：

@@ -35,7 +35,7 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++ sqlite sqlite-dev
 
 # 复制后端依赖文件
-COPY package.json ./
+COPY package*.json ./
 
 # 安装后端依赖（仅生产依赖）
 RUN npm ci --only=production --silent && \
