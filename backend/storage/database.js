@@ -248,7 +248,7 @@ class Database {
         correct_answer TEXT NOT NULL,
         answer_keywords TEXT,
         difficulty INTEGER DEFAULT 3,
-        next_steps TEXT,
+        next_steps TEXT DEFAULT "",
         solved INTEGER DEFAULT 0,
         solved_by TEXT,
         solved_at DATETIME,

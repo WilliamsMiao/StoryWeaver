@@ -725,6 +725,15 @@ ${chapterContent.substring(0, 1000)}
    * @returns {Object} { isCorrect, confidence, feedback }
    */
   async validatePuzzleAnswer(playerAnswer, puzzle) {
+    // 验证配置常量
+    const VALIDATION_CONFIG = {
+      KEYWORD_WEIGHT: 0.7,
+      ANSWER_WEIGHT: 0.3,
+      CORRECT_THRESHOLD: 0.7,
+      HIGH_CONFIDENCE_THRESHOLD: 0.85,
+      NEAR_THRESHOLD: 0.4
+    };
+    
     const keywords = (puzzle.answer_keywords || '').split('|').map(k => k.trim().toLowerCase());
     const answerLower = playerAnswer.toLowerCase();
     const correctAnswerLower = (puzzle.correct_answer || '').toLowerCase();
@@ -737,16 +746,15 @@ ${chapterContent.substring(0, 1000)}
     const correctAnswerParts = correctAnswerLower.split(/[，。、\s]+/).filter(p => p.length > 1);
     const answerMatch = correctAnswerParts.filter(p => answerLower.includes(p)).length / Math.max(correctAnswerParts.length, 1);
     
-    // 提高正确判断的阈值，确保答案更加准确
-    // 使用70%作为阈值，确保答案包含足够的关键信息以保证唯一性
-    const confidence = (keywordMatch * 0.7 + answerMatch * 0.3);
-    const isCorrect = confidence >= 0.7; // 70%匹配度，确保答案唯一且可验证
+    // 计算置信度并判断正确性
+    const confidence = (keywordMatch * VALIDATION_CONFIG.KEYWORD_WEIGHT + answerMatch * VALIDATION_CONFIG.ANSWER_WEIGHT);
+    const isCorrect = confidence >= VALIDATION_CONFIG.CORRECT_THRESHOLD;
 
     let feedback = '';
     let nextSteps = puzzle.next_steps || '';
     
     if (isCorrect) {
-      if (confidence >= 0.85) {
+      if (confidence >= VALIDATION_CONFIG.HIGH_CONFIDENCE_THRESHOLD) {
         feedback = '🎉 完全正确！你成功解开了这个谜题！\n\n';
       } else {
         feedback = '✅ 正确！你的推理方向完全对了！\n\n';
@@ -759,7 +767,7 @@ ${chapterContent.substring(0, 1000)}
       } else {
         feedback += '💡 等待其他玩家完成解谜，故事即将继续推进...';
       }
-    } else if (confidence >= 0.4) {
+    } else if (confidence >= VALIDATION_CONFIG.NEAR_THRESHOLD) {
       feedback = '🤔 答案接近了，但还不够准确...请再仔细思考一下？\n\n💭 提示：答案应该更加具体和明确。';
     } else {
       feedback = '❌ 这个答案似乎偏离了方向。\n\n💡 建议：回顾你获得的线索，或者向故事机询问更多提示。';
