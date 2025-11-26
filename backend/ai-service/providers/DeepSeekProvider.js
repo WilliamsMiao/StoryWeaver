@@ -26,7 +26,7 @@ export class DeepSeekProvider extends AIProvider {
     const messages = [
       {
         role: 'system',
-        content: '你是一位专业的创意写作助手，擅长根据上下文生成连贯、有趣的故事内容。'
+        content: '你是一位专业的剧本杀游戏主持人（DM），擅长根据玩家行动推进剧情，营造悬疑氛围，并通过NPC互动提供线索。'
       },
       {
         role: 'user',
@@ -45,7 +45,7 @@ export class DeepSeekProvider extends AIProvider {
     const messages = [
       {
         role: 'system',
-        content: '你是一位专业的文本摘要助手。'
+        content: '你是一位剧本杀案件记录员，擅长提炼关键线索和事件。'
       },
       {
         role: 'user',
@@ -66,7 +66,7 @@ export class DeepSeekProvider extends AIProvider {
     const messages = [
       {
         role: 'system',
-        content: '你是一位专业的创意写作助手，擅长为故事创作令人满意的结局。'
+        content: '你是一位专业的剧本杀编剧，擅长为案件创作真相揭晓和凶手伏法的精彩结局。'
       },
       {
         role: 'user',
@@ -135,6 +135,45 @@ export class DeepSeekProvider extends AIProvider {
     // DeepSeek支持32K上下文，这里实现简单的截断逻辑
     // 实际使用时可以根据需要优化
     return messages;
+  }
+
+  async checkAvailability() {
+    if (this.devMode) {
+      return {
+        available: true,
+        reason: 'DeepSeekProvider 运行在开发模式（返回模拟响应）'
+      };
+    }
+    if (!this.apiKey) {
+      return {
+        available: false,
+        reason: 'DeepSeek API密钥未配置'
+      };
+    }
+    try {
+      const response = await fetch(`${this.baseURL}/v1/models`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`
+        }
+      });
+      if (!response.ok) {
+        const reason = response.status === 401
+          ? 'DeepSeek API密钥无效或已失效'
+          : `DeepSeek API响应异常: ${response.status}`;
+        return {
+          available: false,
+          reason
+        };
+      }
+      return { available: true };
+    } catch (error) {
+      console.error('DeepSeek 可用性检查失败:', error);
+      return {
+        available: false,
+        reason: error.message
+      };
+    }
   }
 }
 

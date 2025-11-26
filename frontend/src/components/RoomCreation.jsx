@@ -10,7 +10,6 @@ export default function RoomCreation() {
   const [username, setUsername] = useState(player?.username || '');
   const [roomName, setRoomName] = useState('');
   const [roomId, setRoomId] = useState('');
-  const [background, setBackground] = useState('');
   const [aiProvider, setAiProvider] = useState('deepseek');
 
   useEffect(() => {
@@ -40,7 +39,7 @@ export default function RoomCreation() {
       setError('请输入房间名称');
       return;
     }
-    createRoom(roomName, background, aiProvider);
+    createRoom(roomName, '', aiProvider);
   };
 
   const handleJoinRoom = (e) => {
@@ -51,15 +50,6 @@ export default function RoomCreation() {
     }
     joinRoom(roomId.trim());
   };
-
-  const backgrounds = [
-    { value: '', label: '自定义' },
-    { value: '在一个遥远的魔法世界中，魔法师们掌握着强大的力量...', label: '魔法世界' },
-    { value: '未来的地球，科技高度发达，人工智能与人类共存...', label: '科幻未来' },
-    { value: '古代江湖，武林高手云集，恩怨情仇交织...', label: '武侠江湖' },
-    { value: '现代都市，隐藏着超自然力量的秘密组织...', label: '现代都市' },
-    { value: '末日废土，幸存者们为了生存而战斗...', label: '末日废土' }
-  ];
 
   if (mode === 'username') {
     return (
@@ -136,28 +126,6 @@ export default function RoomCreation() {
                 placeholder="输入房间名称"
                 required
               />
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-lg font-bold mb-2 text-pixel-wood-dark">故事背景</label>
-              <select
-                value={background}
-                onChange={(e) => setBackground(e.target.value)}
-                className="input-field w-full cursor-pointer"
-              >
-                {backgrounds.map(bg => (
-                  <option key={bg.value} value={bg.value}>{bg.label}</option>
-                ))}
-              </select>
-              {background && (
-                <textarea
-                  value={background}
-                  onChange={(e) => setBackground(e.target.value)}
-                  className="input-field w-full mt-2"
-                  rows="3"
-                  placeholder="或自定义故事背景..."
-                />
-              )}
             </div>
 
             <div className="mb-4">

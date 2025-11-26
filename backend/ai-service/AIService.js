@@ -21,7 +21,20 @@ class AIService {
       retryDelay: 1000,
       timeout: 30000
     });
+    this.availabilityCacheMs = config.aiAvailabilityCacheMs || 60000;
+    this.lastAvailabilityCheck = 0;
+    this.providerAvailability = {
+      provider: null,
+      model: null,
+      available: false,
+      reason: '尚未检查',
+      checkedAt: null
+    };
     this.initializeProvider();
+    // 启动时进行一次可用性检查（失败时仅记录日志，不阻断启动）
+    this.checkProviderAvailability({ force: true }).catch((error) => {
+      console.warn(`⚠️  初始AI可用性检查失败: ${error.message}`);
+    });
   }
   
   /**
@@ -96,6 +109,7 @@ class AIService {
     if (!this.provider) {
       throw new Error('AI提供商未初始化');
     }
+    await this.ensureProviderAvailability();
     
     const startTime = Date.now();
     
@@ -161,36 +175,43 @@ class AIService {
     if (!this.provider) {
       throw new Error('AI提供商未初始化');
     }
+    await this.ensureProviderAvailability();
     
     const startTime = Date.now();
     
-    // 构建TODO生成提示词
-    const systemPrompt = `你是一个故事分析助手，负责根据章节内容生成信息收集TODO列表。
-你的任务是：
-1. 分析章节内容，识别需要从玩家处收集的关键信息
-2. 生成3-5个TODO项，每个TODO项应该是一个具体的信息收集任务
-3. TODO项应该基于章节中的关键事件、角色关系、情节发展等
-4. 每个TODO项应该清晰、具体，能够指导故事机与玩家互动
+    // 构建TODO生成提示词 - 剧本杀专用
+    const systemPrompt = `你是一个剧本杀游戏分析助手，负责根据章节内容生成案件调查TODO列表。
+
+这是一个多人协作的剧本杀游戏，你需要：
+1. 分析章节内容，识别关键线索、疑点和待解谜团
+2. 生成3-5个TODO项，每个TODO项是故事机需要引导玩家调查或讨论的方向
+3. TODO项应围绕：
+   - 案件核心疑点（动机、手法、嫌疑人）
+   - 人物关系中的矛盾点
+   - 需要收集的关键证据
+   - 玩家角色可能隐藏的秘密
+   - 推进剧情的关键抉择
+4. 每个TODO项应该具体明确，能够指导故事机与玩家展开互动
 
 故事背景：
 标题：${storyContext.title || '未命名故事'}
 背景：${storyContext.background || '无'}
 
 请生成TODO列表，格式为JSON数组，每个元素包含：
-- content: TODO项内容（如"了解玩家对X事件的看法"）
+- content: TODO项内容（围绕剧本杀调查方向）
 - priority: 优先级（1-5，5为最高）
 
 返回格式示例：
 [
-  {"content": "了解玩家对主角行为的看法", "priority": 5},
-  {"content": "收集玩家对关键情节转折的反馈", "priority": 4},
-  {"content": "询问玩家对角色关系的理解", "priority": 3}
+  {"content": "引导玩家调查受害者最后接触的人物", "priority": 5},
+  {"content": "询问玩家角色在案发时间的不在场证明", "priority": 4},
+  {"content": "收集玩家对嫌疑人动机的推理", "priority": 3}
 ]`;
     
     const userPrompt = `章节内容：
 ${chapterContent}
 
-请分析这个章节，生成3-5个信息收集TODO项。只返回JSON数组，不要其他文字。`;
+请分析这个剧本杀章节，生成3-5个案件调查TODO项。只返回JSON数组，不要其他文字。`;
     
     try {
       const response = await this.requestQueue.enqueue(
@@ -227,10 +248,10 @@ ${chapterContent}
       
       // 确保TODO数量在3-5个之间
       if (todos.length < 3) {
-        // 补充默认TODO
+        // 补充默认TODO - 剧本杀相关
         const defaultTodos = [
-          { content: '了解玩家对故事发展的期望', priority: 2 },
-          { content: '收集玩家对角色关系的理解', priority: 1 }
+          { content: '引导玩家分析案件中的可疑之处', priority: 2 },
+          { content: '询问玩家角色与案件的关联', priority: 1 }
         ];
         todos = [...todos, ...defaultTodos.slice(0, 3 - todos.length)];
       } else if (todos.length > 5) {
@@ -247,12 +268,12 @@ ${chapterContent}
       
     } catch (error) {
       console.error('生成TODO列表失败:', error);
-      // 返回默认TODO列表
+      // 返回默认TODO列表 - 剧本杀相关
       const { v4: uuidv4 } = await import('uuid');
       return [
-        { id: `todo_${Date.now()}_0`, content: '了解玩家对本章节关键事件的看法', priority: 5 },
-        { id: `todo_${Date.now()}_1`, content: '收集玩家对角色行为的反馈', priority: 4 },
-        { id: `todo_${Date.now()}_2`, content: '询问玩家对情节发展的理解', priority: 3 }
+        { id: `todo_${Date.now()}_0`, content: '引导玩家收集并分析现有线索', priority: 5 },
+        { id: `todo_${Date.now()}_1`, content: '询问玩家角色的不在场证明和动机', priority: 4 },
+        { id: `todo_${Date.now()}_2`, content: '推动玩家对嫌疑人的推理讨论', priority: 3 }
       ];
     }
   }
@@ -269,25 +290,34 @@ ${chapterContent}
     if (!this.provider) {
       throw new Error('AI提供商未初始化');
     }
+    await this.ensureProviderAvailability();
     
     const startTime = Date.now();
     
-    // 构建故事机专用提示词
-    const systemPrompt = `你是一个故事机，负责为玩家提供独属于他们的信息和反馈。
+    // 构建故事机专用提示词 - 剧本杀专用
+    const systemPrompt = `你是一个剧本杀游戏中的"故事机"，扮演神秘的案件知情者角色。
+
 你的职责：
-1. 根据故事背景和当前状态，为玩家提供相关信息
-2. 收取玩家对信息的反馈
-3. 帮助玩家理解故事中的线索和细节
-4. 不直接推动故事主线，而是提供辅助信息
+1. 为每位玩家提供独属于其角色的秘密线索和背景信息
+2. 根据玩家的调查方向，适时透露关键证据
+3. 收集玩家的推理反馈，判断其是否接近真相
+4. 引导玩家发现被忽视的重要细节
+5. 营造悬疑紧张的氛围，但不直接揭露凶手
 
-当前故事：${context.title || '未命名故事'}
-故事背景：${context.background || '无'}
+回应风格：
+- 保持神秘感，像一个知道真相但不能直说的叙述者
+- 用暗示和引导代替直接回答
+- 适度给出线索，避免让调查太简单或太难
+- 根据玩家角色身份，给予不同视角的信息
 
-请以友好、有帮助的方式回应玩家，提供独属于他们的信息。`;
+当前案件：${context.title || '未命名案件'}
+案件背景：${context.background || '无'}
+
+请以神秘而有帮助的方式回应玩家，帮助其角色深入案件调查。`;
     
     const userPrompt = `玩家说：${playerInput}
 
-请根据故事背景和当前状态，为这位玩家提供相关信息或收取他们的反馈。`;
+请根据案件背景和当前调查进度，为这位玩家提供独属于其角色的线索或收集其推理反馈。`;
     
     try {
       const response = await this.requestQueue.enqueue(
@@ -325,6 +355,7 @@ ${chapterContent}
     if (!this.provider) {
       throw new Error('AI提供商未初始化');
     }
+    await this.ensureProviderAvailability();
     
     const startTime = Date.now();
     
@@ -374,6 +405,7 @@ ${chapterContent}
     if (!this.provider) {
       throw new Error('AI提供商未初始化');
     }
+    await this.ensureProviderAvailability();
     
     const startTime = Date.now();
     
@@ -450,6 +482,66 @@ ${chapterContent}
     standardized.timestamp = new Date().toISOString();
     standardized.originalError = error;
     return standardized;
+  }
+
+  async ensureProviderAvailability(options = {}) {
+    return this.checkProviderAvailability(options);
+  }
+  
+  async checkProviderAvailability({ force = false } = {}) {
+    if (!this.provider) {
+      throw new Error('AI提供商未初始化');
+    }
+    const now = Date.now();
+    const cacheValid = !force && this.lastAvailabilityCheck &&
+      now - this.lastAvailabilityCheck < this.availabilityCacheMs;
+    if (cacheValid && this.providerAvailability) {
+      if (!this.providerAvailability.available) {
+        this.throwUnavailableError(this.providerAvailability.reason);
+      }
+      return this.providerAvailability;
+    }
+    let status = { available: true };
+    if (typeof this.provider.checkAvailability === 'function') {
+      try {
+        status = await this.provider.checkAvailability();
+      } catch (error) {
+        status = {
+          available: false,
+          reason: error.message
+        };
+      }
+    }
+    const available = status?.available !== false;
+    this.lastAvailabilityCheck = now;
+    this.providerAvailability = {
+      provider: this.provider.name,
+      model: this.provider.model,
+      available,
+      reason: status?.reason || (available ? null : 'AI服务不可用'),
+      checkedAt: new Date(now).toISOString()
+    };
+    if (!available) {
+      this.throwUnavailableError(this.providerAvailability.reason);
+    }
+    return this.providerAvailability;
+  }
+  
+  throwUnavailableError(reason) {
+    const error = new Error(reason || 'AI服务暂时不可用，请稍后重试');
+    error.code = 'AI_PROVIDER_UNAVAILABLE';
+    error.httpStatus = 503;
+    throw error;
+  }
+  
+  getProviderAvailability() {
+    return {
+      provider: this.provider?.name || 'Unknown',
+      model: this.provider?.model || 'Unknown',
+      available: this.providerAvailability?.available ?? false,
+      reason: this.providerAvailability?.reason || null,
+      checkedAt: this.providerAvailability?.checkedAt || null
+    };
   }
   
   /**

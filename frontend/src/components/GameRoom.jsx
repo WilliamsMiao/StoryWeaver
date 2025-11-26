@@ -4,6 +4,7 @@ import { useGame } from '../context/GameContext';
 import StoryPanel from './GameRoom/StoryPanel';
 import InputPanel from './GameRoom/InputPanel';
 import StatusPanel from './GameRoom/StatusPanel';
+import { FullPagePixelLoader } from './PixelLoader';
 
 export default function GameRoom() {
   const { roomId } = useParams();
@@ -12,6 +13,17 @@ export default function GameRoom() {
   const [initialized, setInitialized] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState('players'); // 'players' | 'history'
+  const [copied, setCopied] = useState(false);
+
+  // 复制房间ID
+  const copyRoomId = useCallback(() => {
+    if (room?.id) {
+      navigator.clipboard.writeText(room.id).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
+  }, [room?.id]);
 
   // 切换侧边栏
   const toggleSidebar = useCallback(() => {
@@ -35,29 +47,11 @@ export default function GameRoom() {
 
   // 加载状态
   if (!socketConnected) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-pixel-bg">
-        <div className="text-center card bg-pixel-panel">
-          <div className="text-xl mb-4 font-bold">正在连接服务器...</div>
-          <div className="flex justify-center">
-            <div className="w-12 h-12 border-4 border-pixel-accent-blue border-t-transparent animate-spin"></div>
-          </div>
-        </div>
-      </div>
-    );
+    return <FullPagePixelLoader text="正在连接服务器" icon="🌐" />;
   }
 
   if (!room) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-pixel-bg">
-        <div className="text-center card bg-pixel-panel">
-          <div className="text-xl mb-4 font-bold">正在加入房间...</div>
-          <div className="flex justify-center">
-            <div className="w-12 h-12 border-4 border-pixel-accent-blue border-t-transparent animate-spin"></div>
-          </div>
-        </div>
-      </div>
-    );
+    return <FullPagePixelLoader text="正在加入房间" icon="🚪" />;
   }
 
   return (
@@ -73,6 +67,16 @@ export default function GameRoom() {
               </h1>
             </div>
             <div className="hidden sm:flex items-center gap-2 text-sm text-pixel-text-light">
+              {/* 房间ID复制按钮 */}
+              <button
+                onClick={copyRoomId}
+                className="bg-pixel-wood-dark/50 px-2 py-0.5 rounded hover:bg-pixel-wood-dark/70 transition-colors flex items-center gap-1"
+                title="点击复制房间ID，分享给好友加入"
+              >
+                <span className="text-xs opacity-70">ID:</span>
+                <span className="font-mono">{room.id.slice(0, 8)}...</span>
+                <span>{copied ? '✓' : '📋'}</span>
+              </button>
               <span className="bg-pixel-wood-dark/50 px-2 py-0.5 rounded">
                 {room.playerCount} 位冒险者
               </span>

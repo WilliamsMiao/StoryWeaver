@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useGame } from '../../context/GameContext';
 
 export default function StoryPanel() {
-  const { story, messages, room, storyMachineMessages, player, initializeStory } = useGame();
+  const { story, messages, room, storyMachineMessages, player, initializeStory, storyInitializing } = useGame();
   const messagesEndRef = useRef(null);
   const [viewMode, setViewMode] = useState('global'); // 'global' | 'storyMachine'
   
@@ -11,7 +11,6 @@ export default function StoryPanel() {
   const [showInitForm, setShowInitForm] = useState(false);
   const [storyTitle, setStoryTitle] = useState('');
   const [storyBackground, setStoryBackground] = useState('');
-  const [isInitializing, setIsInitializing] = useState(false);
   
   // 调试：检查消息数据
   useEffect(() => {
@@ -91,21 +90,88 @@ export default function StoryPanel() {
 
   const handleInitializeStory = async (e) => {
     e.preventDefault();
-    if (!storyTitle.trim() || isInitializing) return;
-    setIsInitializing(true);
+    console.log('📖 开始初始化故事:', { storyTitle, storyBackground, storyInitializing });
+    if (!storyTitle.trim() || storyInitializing) {
+      console.log('⚠️ 初始化被阻止:', { titleEmpty: !storyTitle.trim(), alreadyInitializing: storyInitializing });
+      return;
+    }
     try {
+      console.log('📤 调用 initializeStory...');
       await initializeStory(storyTitle, storyBackground);
+      console.log('✅ 故事初始化成功');
       setShowInitForm(false);
       setStoryTitle('');
       setStoryBackground('');
     } catch (err) {
-      console.error('初始化失败:', err);
-    } finally {
-      setIsInitializing(false);
+      console.error('❌ 初始化失败:', err);
     }
   };
 
   if (!story) {
+    // 正在创建故事中 - 显示加载界面
+    if (storyInitializing) {
+      return (
+        <div className="h-full flex items-center justify-center p-6 bg-pixel-panel">
+          <div className="text-center max-w-md w-full">
+            {/* 弹跳的书本图标 */}
+            <div className="text-7xl mb-6 animate-bounce" style={{ animationDuration: '1.5s' }}>📖</div>
+            
+            <h2 className="text-2xl font-bold text-pixel-wood-dark mb-4" style={{ textShadow: '2px 2px 0 #fff' }}>
+              故事正在创建中
+            </h2>
+            
+            {/* 像素风格进度条 */}
+            <div className="space-y-4">
+              
+              {/* 进度条 */}
+              <div className="w-64 h-4 bg-pixel-wood-dark/30 border-2 border-pixel-wood-dark mx-auto overflow-hidden">
+                <div 
+                  className="h-full bg-pixel-accent-blue"
+                  style={{
+                    animation: 'pixelProgress 2s ease-in-out infinite'
+                  }}
+                ></div>
+              </div>
+              
+              {/* 状态文字 */}
+              <div className="mt-4 space-y-1">
+                <p className="text-pixel-wood-dark font-bold flex items-center justify-center gap-1">
+                  <span className="text-pixel-accent-yellow">⚡</span>
+                  AI 正在构思精彩开篇
+                  <span className="inline-flex">
+                    <span className="animate-bounce" style={{ animationDelay: '0ms' }}>.</span>
+                    <span className="animate-bounce" style={{ animationDelay: '200ms' }}>.</span>
+                    <span className="animate-bounce" style={{ animationDelay: '400ms' }}>.</span>
+                  </span>
+                </p>
+                <p className="text-xs text-pixel-text-muted">
+                  这可能需要几秒钟，请耐心等待
+                </p>
+              </div>
+            </div>
+            
+            {/* 像素动画样式 */}
+            <style>{`
+              @keyframes pixelProgress {
+                0% { 
+                  width: 5%; 
+                  margin-left: 0;
+                }
+                50% { 
+                  width: 50%; 
+                  margin-left: 25%;
+                }
+                100% { 
+                  width: 5%; 
+                  margin-left: 95%;
+                }
+              }
+            `}</style>
+          </div>
+        </div>
+      );
+    }
+    
     return (
       <div className="h-full flex items-center justify-center p-6 bg-pixel-panel">
         <div className="text-center max-w-md w-full">
@@ -157,10 +223,10 @@ export default function StoryPanel() {
                   <div className="flex gap-3 pt-2">
                     <button
                       type="submit"
-                      disabled={isInitializing || !storyTitle.trim()}
+                      disabled={storyInitializing || !storyTitle.trim()}
                       className="btn-primary flex-1 disabled:opacity-50"
                     >
-                      {isInitializing ? (
+                      {storyInitializing ? (
                         <span className="flex items-center justify-center gap-2">
                           <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
                           创建中...
@@ -277,7 +343,31 @@ export default function StoryPanel() {
         ref={messagesContainerRef}
         className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
       >
-        {displayMessages.length === 0 ? (
+        {/* 故事生成中的加载消息框 */}
+        {storyInitializing && (
+          <div className="border-l-4 border-pixel-accent-blue pl-4 py-3 bg-pixel-accent-blue/10 rounded-r-lg animate-pulse">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl animate-bounce">🤖</span>
+                <span className="text-sm font-bold text-pixel-accent-blue">故事机</span>
+              </div>
+              <div className="flex gap-1">
+                <span className="w-2 h-2 bg-pixel-accent-blue rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                <span className="w-2 h-2 bg-pixel-accent-blue rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                <span className="w-2 h-2 bg-pixel-accent-blue rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+              </div>
+            </div>
+            <div className="text-lg text-pixel-wood-dark font-medium">
+              <span className="inline-block">正在构思精彩的故事开篇</span>
+              <span className="inline-block ml-1 animate-pulse">...</span>
+            </div>
+            <div className="text-xs text-pixel-wood-dark/70 mt-2">
+              ✨ AI 正在根据您的设定创作独特的故事世界
+            </div>
+          </div>
+        )}
+        
+        {displayMessages.length === 0 && !storyInitializing ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center text-pixel-text-muted">
               <div className="text-4xl mb-3">{viewMode === 'storyMachine' ? '🤖' : '✨'}</div>

@@ -86,7 +86,7 @@ export class QwenProvider extends AIProvider {
       const messages = [
         {
           role: 'system',
-          content: '你是一位专业的创意写作助手。'
+          content: '你是一位专业的剧本杀游戏主持人（DM），擅长根据玩家行动推进剧情，营造悬疑氛围。'
         },
         {
           role: 'user',
@@ -142,7 +142,7 @@ export class QwenProvider extends AIProvider {
     const messages = [
       {
         role: 'system',
-        content: '你是一位专业的创意写作助手。'
+        content: '你是一位专业的剧本杀游戏主持人（DM），擅长根据玩家行动推进剧情，营造悬疑氛围。'
       },
       {
         role: 'user',
@@ -189,6 +189,60 @@ export class QwenProvider extends AIProvider {
   truncateContext(messages, maxTokens = 8000) {
     // Qwen支持32K上下文
     return messages;
+  }
+
+  async checkAvailability() {
+    if (this.isLocal) {
+      const localURL = process.env.LOCAL_AI_URL || 'http://localhost:11434';
+      try {
+        const response = await fetch(`${localURL}/v1/models`, {
+          method: 'GET'
+        });
+        if (!response.ok) {
+          return {
+            available: false,
+            reason: `本地Qwen服务响应异常: ${response.status}`
+          };
+        }
+        return { available: true };
+      } catch (error) {
+        console.error('本地Qwen 可用性检查失败:', error);
+        return {
+          available: false,
+          reason: error.message
+        };
+      }
+    }
+    if (!this.apiKey) {
+      return {
+        available: false,
+        reason: 'Qwen API密钥未配置'
+      };
+    }
+    try {
+      const response = await fetch(`${this.baseURL}/v1/models`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`
+        }
+      });
+      if (!response.ok) {
+        const reason = response.status === 401
+          ? 'Qwen API密钥无效或已失效'
+          : `Qwen API响应异常: ${response.status}`;
+        return {
+          available: false,
+          reason
+        };
+      }
+      return { available: true };
+    } catch (error) {
+      console.error('Qwen 可用性检查失败:', error);
+      return {
+        available: false,
+        reason: error.message
+      };
+    }
   }
 }
 

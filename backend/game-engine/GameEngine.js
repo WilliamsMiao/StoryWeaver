@@ -6,6 +6,13 @@ import AIService from '../ai-service/AIService.js';
 import database from '../storage/database.js';
 import { createChapterManager } from './chapters/index.js';
 import { createMemorySystem } from '../ai-service/memory/index.js';
+import {
+  getChapterTriggerOptions,
+  getFeedbackSystemConfig,
+  getStoryGenerationTriggers
+} from '../config/gameConfig.js';
+
+const EMPTY_ROOM_GRACE_PERIOD_MS = 5 * 60 * 1000;
 
 /**
  * 游戏引擎
@@ -17,6 +24,8 @@ class GameEngine {
     this.chapterManagers = new Map(); // storyId -> chapterManager
     this.memorySystems = new Map(); // storyId -> memorySystem
     this.playerStates = new Map(); // playerId -> { lastActive, online }
+    this.emptyRoomTimers = new Map(); // roomId -> { timeout, expiresAt }
+    this.emptyRoomGracePeriodMs = EMPTY_ROOM_GRACE_PERIOD_MS;
   }
   
   // 创建房间
@@ -49,6 +58,7 @@ class GameEngine {
     room.addPlayer(hostPlayer);
     
     this.rooms.set(roomId, room);
+    this.cancelEmptyRoomCleanup(roomId);
     
     return room;
   }
@@ -143,6 +153,7 @@ class GameEngine {
       role: 'player'
     });
     room.addPlayer(newPlayer);
+    this.cancelEmptyRoomCleanup(roomId);
     
     return room;
   }
@@ -153,69 +164,101 @@ class GameEngine {
     if (!room) {
       throw new Error('房间不存在');
     }
+    await AIService.ensureProviderAvailability({ force: true });
     
     if (room.story) {
-      throw new Error('故事已经初始化');
+      const hasContent = room.story.chapters && room.story.chapters.length > 0;
+      if (!hasContent) {
+        console.warn(`检测到房间 ${roomId} 存在未完成的故事，正在重置...`);
+        await this.cleanupStoryResources(roomId, room.story.id);
+      } else {
+        throw new Error('故事已经初始化');
+      }
     }
     
     const storyId = uuidv4();
+    let story;
     
-    // 创建故事记录
-    await database.createStory(storyId, roomId, title, background);
-    
-    // 创建内存中的故事对象
-    const story = new GameStory({
-      id: storyId,
-      roomId,
-      title,
-      background
-    });
-    
-    room.setStory(story);
-    room.updateStatus('playing');
-    await database.updateRoomStatus(roomId, 'playing');
-    
-    // 初始化章节管理系统
-    const chapterManager = createChapterManager(storyId, {
-      trigger: {
-        wordCount: 2500,
-        timeElapsed: 30,
-        keyEvents: 3
-      }
-    });
-    this.chapterManagers.set(storyId, chapterManager);
-    
-    // 初始化记忆系统
-    const memorySystem = createMemorySystem(storyId);
-    await memorySystem.loadAllMemories();
-    this.memorySystems.set(storyId, memorySystem);
-    
-    // 生成初始章节并启动故事机互动
     try {
-      // 生成第一个章节
-      const firstChapter = await this.generateFirstChapter(story, title, background);
+      // 初始化章节管理系统（优先确保配置有效）
+      const chapterTriggerOptions = getChapterTriggerOptions();
+      const chapterManager = createChapterManager(storyId, {
+        trigger: chapterTriggerOptions
+      });
+      this.chapterManagers.set(storyId, chapterManager);
       
-      // 启动故事机互动
-      const interactionResult = await this.initiateStoryMachineInteraction(roomId, firstChapter.id, story);
+      // 初始化记忆系统
+      const memorySystem = createMemorySystem(storyId);
+      await memorySystem.loadAllMemories();
+      this.memorySystems.set(storyId, memorySystem);
       
-      return {
-        room,
-        story,
-        firstChapter,
-        interactionResult
-      };
+      // 创建故事记录
+      await database.createStory(storyId, roomId, title, background);
+      
+      // 创建内存中的故事对象
+      story = new GameStory({
+        id: storyId,
+        roomId,
+        title,
+        background
+      });
+      
+      room.setStory(story);
+      room.updateStatus('playing');
+      await database.updateRoomStatus(roomId, 'playing');
+      
+      // 生成初始章节并启动故事机互动
+      try {
+        const firstChapter = await this.generateFirstChapter(story, title, background);
+        const interactionResult = await this.initiateStoryMachineInteraction(roomId, firstChapter.id, story);
+        
+        return {
+          room,
+          story,
+          firstChapter,
+          interactionResult
+        };
+      } catch (error) {
+        console.error('生成初始章节失败:', error);
+        return {
+          room,
+          story,
+          firstChapter: null,
+          interactionResult: null
+        };
+      }
     } catch (error) {
-      console.error('生成初始章节失败:', error);
-      // 即使失败也返回房间和故事
-      return {
-        room,
-        story,
-        firstChapter: null,
-        interactionResult: null
-      };
+      console.error('初始化故事失败，开始回滚:', error);
+      await this.cleanupStoryResources(roomId, storyId);
+      throw error;
     }
   }
   
+  /**
+   * 清理未完成的故事资源
+   */
+  async cleanupStoryResources(roomId, storyId) {
+    if (storyId) {
+      this.chapterManagers.delete(storyId);
+      this.memorySystems.delete(storyId);
+      try {
+        await database.deleteStory(storyId);
+      } catch (error) {
+        console.error('清理故事数据失败:', error);
+      }
+    }
+    const room = this.rooms.get(roomId);
+    if (room) {
+      room.story = null;
+      room.updateStatus('waiting');
+    }
+    try {
+      await database.updateRoomStatus(roomId, 'waiting');
+    } catch (error) {
+      console.error('重置房间状态失败:', error);
+    }
+  }
+
   /**
    * 生成第一个章节
    */
@@ -233,9 +276,35 @@ class GameEngine {
         chapters: [],
         memories: []
       },
-      `请为故事"${title}"生成第一章的开头。故事背景：${background}
+      `【剧本杀游戏 - 第一章开篇】
 
-重要提示：当故事中出现NPC（非玩家角色）时，请使用格式 [NPC:名称] 来标记NPC名称，例如："[NPC:张老师]走了过来" 或 "遇到了[NPC:神秘商人]"。玩家名称不需要标记，系统会自动识别。`
+你正在为一款多人在线剧本杀游戏生成故事开篇。请为故事"${title}"创作第一章的精彩开头。
+
+故事背景：${background}
+
+## 创作要求：
+
+### 1. 剧本杀核心元素
+- **悬疑氛围**：设置一个引人入胜的谜团或事件作为故事核心
+- **多角色设计**：创建2-4个性格鲜明的NPC角色，他们可能有各自的秘密和动机
+- **线索埋设**：在场景描写中自然地埋入可供玩家发现的线索
+- **选择空间**：故事应该为玩家留下探索和选择的空间
+
+### 2. 场景与氛围
+- 详细描述故事发生的场景和环境
+- 营造适合推理探索的氛围（可以是古宅、派对、神秘岛屿等）
+- 交代时间背景和基本设定
+
+### 3. 事件触发
+- 以一个引人注目的事件作为故事开端（如突发案件、神秘邀请、意外发现等）
+- 让玩家有参与感和紧迫感
+
+### 4. 格式要求
+- 字数：300-500字
+- 当出现NPC时，使用格式 [NPC:名称] 标记，例如："[NPC:管家老陈]走了过来"
+- 结尾留下悬念，引导玩家开始探索
+
+请创作一个精彩的开篇，让玩家迫不及待想要参与这场剧本杀游戏！`
     );
     
     // 创建章节
@@ -246,8 +315,8 @@ class GameEngine {
       story.id,
       chapterNumber,
       chapterContent.content,
-      null,
-      'ai'
+      null,  // authorId 设为 null，因为是系统生成
+      null   // summary 设为 null
     );
     
     const chapter = {
@@ -848,19 +917,27 @@ class GameEngine {
     const topTodo = todos.sort((a, b) => b.priority - a.priority)[0];
     
     // 构建提示词
-    const systemPrompt = `你是一个故事机，负责与玩家互动收集反馈。
-当前章节：第${chapter.chapterNumber}章
-章节内容：${chapter.content.substring(0, 500)}...
+    const systemPrompt = `你是剧本杀游戏中的"故事机"，负责引导玩家探索和收集信息。
 
-你需要收集的信息（TODO）：
+## 游戏背景
+- 故事标题：${story.title}
+- 当前章节：第${chapter.chapterNumber}章
+- 玩家名称：${player.username}
+
+## 章节内容摘要
+${chapter.content.substring(0, 500)}...
+
+## 你需要引导玩家探索的方向（TODO）
 ${todos.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}
 
-请生成一条友好的初始消息，向玩家${player.username}介绍本章节，并引导他们与你互动。
-消息应该：
-1. 简要提及本章节的关键内容
-2. 基于最高优先级的TODO（${topTodo.content}）提出问题或引导
-3. 语气友好、自然
-4. 长度控制在100-150字`;
+## 生成要求
+请生成一条引导消息：
+1. 以友好但神秘的语气与玩家打招呼
+2. 简要提及本章节发生的关键事件
+3. 基于最高优先级的探索方向（${topTodo.content}），向玩家提出一个引导性问题
+4. 暗示玩家可以通过探索来发现更多信息
+5. 长度：80-120字
+6. 语气：像一个神秘的向导，既友好又保持悬疑感`;
 
     try {
       // 使用AIService的generateStoryMachineResponse方法，但自定义提示词
@@ -927,10 +1004,11 @@ ${todos.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}
       return await this.generateNextChapter(roomId, chapterId);
     }
     
+    const feedbackConfig = getFeedbackSystemConfig();
     return {
       ready: false,
       playersProgress: checkResult.playersProgress,
-      reason: '玩家反馈未达到80%完成度'
+      reason: `玩家反馈未达到${feedbackConfig.progressionThreshold * 100}%完成度`
     };
   }
   
@@ -1138,6 +1216,9 @@ TODO项：${todo.content}
    */
   async shouldTriggerStoryGeneration(roomId, storyId, message, currentChapter) {
     try {
+      // 获取配置
+  const triggers = getStoryGenerationTriggers();
+      
       // 获取当前章节内的全局消息数量
       const recentMessages = await database.getRecentGlobalMessages(storyId, currentChapter?.id);
       const messageCount = recentMessages.length;
@@ -1148,45 +1229,46 @@ TODO项：${todo.content}
         return true;
       }
       
-      // 条件2：累积消息数达到阈值（每3条消息触发一次）
-      const MESSAGE_THRESHOLD = 3;
-      if (messageCount % MESSAGE_THRESHOLD === 0) {
+      // 条件2：累积消息数达到阈值
+      if (messageCount % triggers.cumulativeMessageCount === 0) {
         console.log(`[触发判断] 消息数达到阈值(${messageCount})，触发生成`);
         return true;
       }
       
       // 条件3：消息包含关键动作词 → 立即触发
-      const ACTION_KEYWORDS = [
-        '攻击', '战斗', '打', '杀', '逃跑', '逃',
-        '寻找', '搜索', '探索', '调查', '发现',
-        '说话', '对话', '交谈', '询问', '回答',
-        '拿', '拾取', '使用', '打开', '关闭',
-        '走', '跑', '跳', '飞', '进入', '离开',
-        '施法', '魔法', '技能', '召唤',
-        '交易', '购买', '出售', '给予',
-        '死', '倒下', '昏迷', '受伤',
-        '结束', '完成', '成功', '失败'
-      ];
-      
-      const hasActionKeyword = ACTION_KEYWORDS.some(keyword => message.includes(keyword));
+      const hasActionKeyword = triggers.actionKeywords.some(keyword => message.includes(keyword));
       if (hasActionKeyword) {
         console.log('[触发判断] 检测到关键动作词，触发生成');
         return true;
       }
       
-      // 条件4：消息长度较长（超过50字符，表示玩家有较多想法）
-      if (message.length > 50) {
+      // 条件4：消息包含假设/选择性表达 → 立即触发
+      const hasQuestionTrigger = triggers.questionTriggers.some(phrase => message.includes(phrase));
+      if (hasQuestionTrigger) {
+        console.log('[触发判断] 检测到假设/选择性表达，触发生成');
+        return true;
+      }
+      
+      // 条件5：消息包含戏剧性/紧急关键词 → 立即触发
+      const hasDramaticKeyword = triggers.dramaticKeywords.some(keyword => message.includes(keyword));
+      if (hasDramaticKeyword) {
+        console.log('[触发判断] 检测到戏剧性关键词，触发生成');
+        return true;
+      }
+      
+      // 条件6：消息长度超过阈值
+      if (message.length > triggers.longMessageThreshold) {
         console.log('[触发判断] 消息较长，触发生成');
         return true;
       }
       
-      // 条件5：距离上次AI响应超过一定时间（如2分钟）
+      // 条件7：距离上次AI响应超过一定时间
       const lastAIMessage = recentMessages.find(m => m.sender_id === 'ai' || m.message_type === 'chapter');
       if (lastAIMessage) {
         const timeSinceLastAI = Date.now() - new Date(lastAIMessage.created_at).getTime();
-        const TIME_THRESHOLD = 2 * 60 * 1000; // 2分钟
-        if (timeSinceLastAI > TIME_THRESHOLD) {
-          console.log('[触发判断] 距离上次AI响应超过2分钟，触发生成');
+        const timeThreshold = triggers.timeIntervalMinutes * 60 * 1000;
+        if (timeSinceLastAI > timeThreshold) {
+          console.log(`[触发判断] 距离上次AI响应超过${triggers.timeIntervalMinutes}分钟，触发生成`);
           return true;
         }
       }
@@ -1279,17 +1361,66 @@ TODO项：${todo.content}
     
     // 如果房间为空，清理相关资源
     if (room.players.size === 0) {
-      this.rooms.delete(roomId);
-      
-      // 清理章节管理器和记忆系统（可选，也可以保留用于历史）
-      if (room.story) {
-        // 可以选择保留或删除
-        // this.chapterManagers.delete(room.story.id);
-        // this.memorySystems.delete(room.story.id);
-      }
+      this.scheduleEmptyRoomCleanup(roomId);
     }
     
     return removed;
+  }
+  
+  scheduleEmptyRoomCleanup(roomId) {
+    if (!roomId) {
+      return;
+    }
+    this.cancelEmptyRoomCleanup(roomId, { silent: true });
+    const timeout = setTimeout(() => {
+      this.deleteRoomResources(roomId, 'empty_timeout').catch(error => {
+        console.error(`自动删除房间 ${roomId} 失败:`, error);
+      });
+    }, this.emptyRoomGracePeriodMs);
+    this.emptyRoomTimers.set(roomId, {
+      timeout,
+      expiresAt: Date.now() + this.emptyRoomGracePeriodMs
+    });
+    console.log(`🕒 房间 ${roomId} 暂无玩家，将在 ${Math.round(this.emptyRoomGracePeriodMs / 60000)} 分钟后自动删除`);
+  }
+  
+  cancelEmptyRoomCleanup(roomId, { silent = false } = {}) {
+    const timer = this.emptyRoomTimers.get(roomId);
+    if (timer) {
+      clearTimeout(timer.timeout);
+      this.emptyRoomTimers.delete(roomId);
+      if (!silent) {
+        console.log(`✅ 房间 ${roomId} 再次有人加入，已取消自动删除计时`);
+      }
+    }
+  }
+  
+  async deleteRoomResources(roomId, reason = 'manual') {
+    if (!roomId) {
+      return;
+    }
+    this.cancelEmptyRoomCleanup(roomId, { silent: true });
+    const room = this.rooms.get(roomId);
+    let storyId = room?.story?.id;
+    if (!storyId) {
+      try {
+        const story = await database.getStory(roomId);
+        storyId = story?.id;
+      } catch (error) {
+        console.error(`查询房间 ${roomId} 故事信息失败:`, error);
+      }
+    }
+    if (storyId) {
+      this.chapterManagers.delete(storyId);
+      this.memorySystems.delete(storyId);
+    }
+    this.rooms.delete(roomId);
+    try {
+      await database.deleteRoom(roomId);
+      console.log(`🧹 房间 ${roomId} 已删除 (原因: ${reason})`);
+    } catch (error) {
+      console.error(`删除房间 ${roomId} 时出错:`, error);
+    }
   }
   
   /**

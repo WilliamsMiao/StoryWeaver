@@ -4,21 +4,9 @@ import ProgressChart from './ProgressChart';
 import ChapterHistory from './ChapterHistory';
 
 export default function StatusPanel({ activeTab = 'players' }) {
-  const { room, story, player, initializeStory, playersProgress, chapterTodos } = useGame();
-  const [showInitForm, setShowInitForm] = useState(false);
-  const [title, setTitle] = useState('');
-  const [background, setBackground] = useState('');
+  const { room, story, player, playersProgress, chapterTodos } = useGame();
 
   const isHost = room?.hostId === player?.id;
-
-  const handleInitializeStory = (e) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-    initializeStory(title, background);
-    setShowInitForm(false);
-    setTitle('');
-    setBackground('');
-  };
 
   // 玩家标签页内容
   const renderPlayersTab = () => (
@@ -85,7 +73,7 @@ export default function StatusPanel({ activeTab = 'players' }) {
         </div>
       </div>
 
-      {/* 故事状态/初始化 */}
+      {/* 故事状态（只读展示） */}
       <div className="border-t-2 border-pixel-wood-dark pt-3">
         <h3 className="text-sm font-bold mb-2 text-pixel-wood-dark flex items-center gap-2">
           <span>📖</span>
@@ -107,40 +95,10 @@ export default function StatusPanel({ activeTab = 'players' }) {
             </div>
           </div>
         ) : (
-          <div className="text-xs">
-            {isHost ? (
-              !showInitForm ? (
-                <button
-                  onClick={() => setShowInitForm(true)}
-                  className="btn-primary w-full text-sm py-1.5"
-                >
-                  🎮 初始化故事
-                </button>
-              ) : (
-                <form onSubmit={handleInitializeStory} className="space-y-2">
-                  <input
-                    type="text"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    className="input-field w-full text-xs py-1"
-                    placeholder="故事标题"
-                    required
-                  />
-                  <textarea
-                    value={background}
-                    onChange={(e) => setBackground(e.target.value)}
-                    className="input-field w-full text-xs py-1 h-16"
-                    placeholder="故事背景（可选）"
-                  />
-                  <div className="flex gap-2">
-                    <button type="submit" className="btn-primary flex-1 text-xs py-1">确定</button>
-                    <button type="button" onClick={() => setShowInitForm(false)} className="btn-secondary text-xs py-1">取消</button>
-                  </div>
-                </form>
-              )
-            ) : (
-              <p className="text-pixel-text-muted text-center">等待房主初始化...</p>
-            )}
+          <div className="text-xs text-center py-2">
+            <p className="text-pixel-text-muted">
+              {isHost ? '请在主面板初始化故事' : '等待房主初始化...'}
+            </p>
           </div>
         )}
       </div>

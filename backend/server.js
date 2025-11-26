@@ -141,7 +141,10 @@ class StoryWeaverServer {
   }
   
   setupSocketHandlers() {
-    this.io.on('connection', (socket) => {
+    // 保存 io 引用，避免嵌套回调中 this 绑定问题
+    const io = this.io;
+    
+    io.on('connection', (socket) => {
       socketLogger(socket, 'connection');
       
       // Socket连接超时处理（延长到5分钟，给用户更多时间）
@@ -212,7 +215,7 @@ class StoryWeaverServer {
           callback({ success: true, room: room.toJSON() });
           
           // 广播房间更新
-          this.io.to(room.id).emit('room_updated', room.toJSON());
+          io.to(room.id).emit('room_updated', room.toJSON());
         } catch (error) {
           errorLogger(error, { event: 'create_room', socketId: socket.id });
           callback({ 
@@ -249,7 +252,7 @@ class StoryWeaverServer {
           callback({ success: true, room: room.toJSON() });
           
           // 广播房间更新
-          this.io.to(roomId).emit('room_updated', room.toJSON());
+          io.to(roomId).emit('room_updated', room.toJSON());
         } catch (error) {
           errorLogger(error, { event: 'join_room', socketId: socket.id });
           callback({ 
@@ -364,13 +367,13 @@ class StoryWeaverServer {
             // 根据可见性发送给相应客户端
             if (visibility === 'global') {
               // 全局消息：发送给房间内所有玩家
-              this.io.to(roomId).emit('new_message', messageData);
+              io.to(roomId).emit('new_message', messageData);
             } else if (visibility === 'private') {
               // 私密消息：只发送给发送者
               socket.emit('new_message', messageData);
             } else if (visibility === 'direct') {
               // 玩家间消息：发送给发送者和接收者
-              const recipientSocket = Array.from(this.io.sockets.sockets.values())
+              const recipientSocket = Array.from(io.sockets.sockets.values())
                 .find(s => s.data.playerId === recipientId && s.data.roomId === roomId);
               
               socket.emit('new_message', messageData);
@@ -382,7 +385,7 @@ class StoryWeaverServer {
           
           // 如果有AI生成的章节，广播给所有玩家
           if (result.chapter && messageType === 'global') {
-            this.io.to(roomId).emit('new_chapter', {
+            io.to(roomId).emit('new_chapter', {
               chapter: result.chapter,
               author: room.players.find(p => p.id === playerId),
               room: room
@@ -394,7 +397,7 @@ class StoryWeaverServer {
             const { storyMachineMessages, todos, chapterId } = result.interactionResult;
             // 向每个玩家发送故事机初始消息
             storyMachineMessages.forEach(({ playerId: targetPlayerId, message }) => {
-              const targetSocket = Array.from(this.io.sockets.sockets.values())
+              const targetSocket = Array.from(io.sockets.sockets.values())
                 .find(s => s.data.playerId === targetPlayerId && s.data.roomId === roomId);
               if (targetSocket) {
                 targetSocket.emit('story_machine_init', message);
@@ -403,7 +406,7 @@ class StoryWeaverServer {
             
             // 广播TODO列表和进度信息给所有玩家
             const allPlayersProgress = await database.getAllPlayersProgress(chapterId);
-            this.io.to(roomId).emit('feedback_progress_update', {
+            io.to(roomId).emit('feedback_progress_update', {
               chapterId,
               todos,
               playersProgress: allPlayersProgress
@@ -418,7 +421,7 @@ class StoryWeaverServer {
               const todos = await database.getChapterTodos(currentChapter.id);
               
               // 发送进度更新给所有玩家
-              this.io.to(roomId).emit('feedback_progress_update', {
+              io.to(roomId).emit('feedback_progress_update', {
                 chapterId: currentChapter.id,
                 todos,
                 playersProgress: allPlayersProgress,
@@ -433,14 +436,14 @@ class StoryWeaverServer {
             const { newChapter, interactionResult } = result.progressionResult;
             
             // 广播新章节
-            this.io.to(roomId).emit('new_chapter', {
+            io.to(roomId).emit('new_chapter', {
               chapter: newChapter,
               author: { id: 'system', username: '系统' },
               room: room
             });
             
             // 发送章节准备就绪事件
-            this.io.to(roomId).emit('chapter_ready', {
+            io.to(roomId).emit('chapter_ready', {
               chapterId: newChapter.id,
               chapterNumber: newChapter.chapterNumber,
               message: '所有玩家反馈收集完成，新章节已生成'
@@ -450,7 +453,7 @@ class StoryWeaverServer {
             if (interactionResult) {
               const { storyMachineMessages, todos, chapterId } = interactionResult;
               storyMachineMessages.forEach(({ playerId: targetPlayerId, message }) => {
-                const targetSocket = Array.from(this.io.sockets.sockets.values())
+                const targetSocket = Array.from(io.sockets.sockets.values())
                   .find(s => s.data.playerId === targetPlayerId && s.data.roomId === roomId);
                 if (targetSocket) {
                   targetSocket.emit('story_machine_init', message);
@@ -459,7 +462,7 @@ class StoryWeaverServer {
               
               // 广播TODO列表和进度信息
               const allPlayersProgress = await database.getAllPlayersProgress(chapterId);
-              this.io.to(roomId).emit('feedback_progress_update', {
+              io.to(roomId).emit('feedback_progress_update', {
                 chapterId,
                 todos,
                 playersProgress: allPlayersProgress
@@ -659,8 +662,8 @@ class StoryWeaverServer {
             });
           }
           
-          const room = gameEngine.getRoomStatus(roomId);
-          if (!room) {
+          const roomStatus = gameEngine.getRoomStatus(roomId);
+          if (!roomStatus) {
             return callback({ 
               success: false,
               error: '房间不存在',
@@ -668,7 +671,7 @@ class StoryWeaverServer {
             });
           }
           
-          if (room.hostId !== playerId) {
+          if (roomStatus.hostId !== playerId) {
             return callback({ 
               success: false,
               error: '只有房主可以初始化故事',
@@ -691,7 +694,7 @@ class StoryWeaverServer {
           );
           
           const story = result.story;
-          const updatedRoom = result.room;
+          const room = result.room;
           
           socketLogger(socket, 'story_initialized', { roomId, storyId: story.id });
           
@@ -700,16 +703,16 @@ class StoryWeaverServer {
             const { firstChapter, interactionResult } = result;
             
             // 广播初始章节
-            this.io.to(roomId).emit('new_chapter', {
+            io.to(roomId).emit('new_chapter', {
               chapter: firstChapter,
               author: { id: 'system', username: '系统' },
-              room: updatedRoom.toJSON()
+              room: room.toJSON()
             });
             
             // 发送故事机初始消息给每个玩家
             if (interactionResult.storyMachineMessages) {
               interactionResult.storyMachineMessages.forEach(({ playerId: targetPlayerId, message }) => {
-                const targetSocket = Array.from(this.io.sockets.sockets.values())
+                const targetSocket = Array.from(io.sockets.sockets.values())
                   .find(s => s.data.playerId === targetPlayerId && s.data.roomId === roomId);
                 if (targetSocket) {
                   targetSocket.emit('story_machine_init', message);
@@ -720,7 +723,7 @@ class StoryWeaverServer {
             // 广播TODO列表和进度信息
             if (interactionResult.todos && interactionResult.chapterId) {
               const allPlayersProgress = await database.getAllPlayersProgress(interactionResult.chapterId);
-              this.io.to(roomId).emit('feedback_progress_update', {
+              io.to(roomId).emit('feedback_progress_update', {
                 chapterId: interactionResult.chapterId,
                 todos: interactionResult.todos,
                 playersProgress: allPlayersProgress
@@ -731,7 +734,7 @@ class StoryWeaverServer {
           callback({ success: true, room: room.toJSON() });
           
           // 广播故事初始化
-          this.io.to(roomId).emit('story_initialized', {
+          io.to(roomId).emit('story_initialized', {
             story: story.toJSON(),
             room: room.toJSON()
           });
@@ -763,8 +766,8 @@ class StoryWeaverServer {
             const room = gameEngine.getRoomStatus(roomId);
             
             if (room) {
-              this.io.to(roomId).emit('room_updated', room);
-              this.io.to(roomId).emit('player_left', {
+              io.to(roomId).emit('room_updated', room);
+              io.to(roomId).emit('player_left', {
                 playerId,
                 room: room
               });

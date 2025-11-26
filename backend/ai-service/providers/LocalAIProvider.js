@@ -125,7 +125,7 @@ export class LocalAIProvider extends AIProvider {
       const messages = [
         {
           role: 'system',
-          content: '你是一位专业的创意写作助手。'
+          content: '你是一位专业的剧本杀游戏主持人（DM），擅长根据玩家行动推进剧情，营造悬疑氛围。'
         },
         {
           role: 'user',
@@ -175,6 +175,28 @@ export class LocalAIProvider extends AIProvider {
     
     // 简单截断逻辑，实际可以更智能
     return messages;
+  }
+
+  async checkAvailability() {
+    const endpoint = this.apiType === 'ollama'
+      ? `${this.baseURL}/api/tags`
+      : `${this.baseURL}/v1/models`;
+    try {
+      const response = await fetch(endpoint, { method: 'GET' });
+      if (!response.ok) {
+        return {
+          available: false,
+          reason: `本地AI服务响应异常: ${response.status}`
+        };
+      }
+      return { available: true };
+    } catch (error) {
+      console.error('本地AI 可用性检查失败:', error);
+      return {
+        available: false,
+        reason: error.message
+      };
+    }
   }
 }
 

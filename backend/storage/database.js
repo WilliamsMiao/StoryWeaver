@@ -4,6 +4,7 @@ import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, mkdirSync } from 'fs';
 import config from '../config/index.js';
+import { getFeedbackSystemConfig } from '../config/gameConfig.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -216,8 +217,7 @@ class Database {
         chapter_number INTEGER,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (room_id) REFERENCES rooms(id),
-        FOREIGN KEY (story_id) REFERENCES stories(id),
-        FOREIGN KEY (sender_id) REFERENCES players(id)
+        FOREIGN KEY (story_id) REFERENCES stories(id)
       )
     `);
     
@@ -375,6 +375,24 @@ class Database {
     );
   }
   
+  async deleteRoom(roomId) {
+    if (!roomId) {
+      return;
+    }
+    try {
+      const story = await this.getStory(roomId);
+      if (story) {
+        await this.deleteStory(story.id);
+      }
+      await this.db.run('DELETE FROM room_players WHERE room_id = ?', [roomId]);
+      await this.db.run('DELETE FROM messages WHERE room_id = ?', [roomId]);
+      await this.db.run('DELETE FROM rooms WHERE id = ?', [roomId]);
+    } catch (error) {
+      console.error(`删除房间 ${roomId} 失败:`, error);
+      throw error;
+    }
+  }
+  
   // 故事相关操作
   async createStory(id, roomId, title, background) {
     await this.db.run(
@@ -394,6 +412,21 @@ class Database {
       `UPDATE stories SET ${fields}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [...values, id]
     );
+  }
+
+  async deleteStory(id) {
+    if (!id) return;
+    await this.db.run('DELETE FROM chapter_todos WHERE story_id = ?', [id]);
+    await this.db.run(
+      `DELETE FROM player_feedback_progress 
+       WHERE chapter_id IN (SELECT id FROM chapters WHERE story_id = ?)`,
+      [id]
+    );
+    await this.db.run('DELETE FROM messages WHERE story_id = ?', [id]);
+    await this.db.run('DELETE FROM interactions WHERE story_id = ?', [id]);
+    await this.db.run('DELETE FROM memories WHERE story_id = ?', [id]);
+    await this.db.run('DELETE FROM chapters WHERE story_id = ?', [id]);
+    await this.db.run('DELETE FROM stories WHERE id = ?', [id]);
   }
   
   // 章节相关操作
@@ -1013,7 +1046,7 @@ class Database {
       return { ready: false, playersProgress: [], reason: '没有TODO项' };
     }
     
-    const COMPLETION_THRESHOLD = 0.8; // 80%阈值
+  const COMPLETION_THRESHOLD = getFeedbackSystemConfig().progressionThreshold;
     
     // 获取每个玩家的进度
     const playersProgress = await Promise.all(

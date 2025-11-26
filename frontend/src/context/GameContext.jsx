@@ -22,6 +22,7 @@ export const GameProvider = ({ children }) => {
   const [messages, setMessages] = useState([]);
   const [storyMachineMessages, setStoryMachineMessages] = useState([]); // 故事机消息列表
   const [loading, setLoading] = useState(false);
+  const [storyInitializing, setStoryInitializing] = useState(false); // 故事正在初始化中
   const [error, setError] = useState(null);
   const [playersProgress, setPlayersProgress] = useState({}); // 玩家反馈进度
   const [chapterTodos, setChapterTodos] = useState([]); // 章节TODO列表
@@ -132,6 +133,12 @@ export const GameProvider = ({ children }) => {
     const handleStoryInitialized = (data) => {
       setStory(data.story);
       setRoom(data.room);
+      setStoryInitializing(false);
+    };
+    
+    const handleStoryGenerationStarted = (data) => {
+      console.log('故事开始生成:', data);
+      setStoryInitializing(true);
     };
     
     const handleStoryMachineInit = (messageData) => {
@@ -188,6 +195,7 @@ export const GameProvider = ({ children }) => {
     socketManager.on('new_message', handleNewMessage);
     socketManager.on('new_chapter', handleNewChapter);
     socketManager.on('story_initialized', handleStoryInitialized);
+    socketManager.on('story_generation_started', handleStoryGenerationStarted);
     socketManager.on('story_machine_init', handleStoryMachineInit);
     socketManager.on('feedback_progress_update', handleFeedbackProgressUpdate);
     socketManager.on('chapter_ready', handleChapterReady);
@@ -336,25 +344,35 @@ export const GameProvider = ({ children }) => {
 
   // 初始化故事
   const initializeStory = useCallback((title, background) => {
-    if (!room) {
-      setError('未加入房间');
-      return;
-    }
-    
-    setLoading(true);
-    setError(null);
-    
-    socketManager.emit('initialize_story', {
-      title,
-      background
-    }, (response) => {
-      setLoading(false);
-      if (response.error) {
-        setError(response.error);
-      } else {
-        setStory(response.room.story);
-        setRoom(response.room);
+    return new Promise((resolve, reject) => {
+      if (!room) {
+        setError('未加入房间');
+        reject(new Error('未加入房间'));
+        return;
       }
+      
+      setLoading(true);
+      setStoryInitializing(true);
+      setError(null);
+      
+      console.log('发送 initialize_story 请求:', { title, background });
+      
+      socketManager.emit('initialize_story', {
+        title,
+        background
+      }, (response) => {
+        console.log('收到 initialize_story 响应:', response);
+        setLoading(false);
+        setStoryInitializing(false);
+        if (response.error) {
+          setError(response.error);
+          reject(new Error(response.error));
+        } else {
+          setStory(response.room.story);
+          setRoom(response.room);
+          resolve(response);
+        }
+      });
     });
   }, [room]);
 
@@ -436,6 +454,7 @@ export const GameProvider = ({ children }) => {
     playersProgress,
     chapterTodos,
     loading,
+    storyInitializing,
     error,
     savePlayer,
     createRoom,

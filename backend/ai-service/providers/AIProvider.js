@@ -63,5 +63,13 @@ export class AIProvider {
     // 默认实现：简单截断，子类可以覆盖
     return messages;
   }
+
+  /**
+   * 检查提供商可用性
+   * @returns {Promise<{available: boolean, reason?: string}>}
+   */
+  async checkAvailability() {
+    return { available: true };
+  }
 }
 

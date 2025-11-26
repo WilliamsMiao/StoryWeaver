@@ -1,14 +1,36 @@
 import { io } from 'socket.io-client';
 
+/**
+ * 获取服务器URL
+ * 优先级：环境变量 > 当前页面origin > 默认localhost
+ */
+function getServerUrl() {
+  // 1. 优先使用环境变量
+  if (import.meta.env.VITE_SERVER_URL) {
+    return import.meta.env.VITE_SERVER_URL;
+  }
+  
+  // 2. 生产环境：使用当前页面的origin（Nginx反向代理场景）
+  if (import.meta.env.PROD) {
+    // 生产环境下，Socket.io通过相对路径连接（由Nginx代理到后端）
+    return window.location.origin;
+  }
+  
+  // 3. 开发环境默认
+  return 'http://localhost:3000';
+}
+
 class SocketManager {
   constructor() {
     this.socket = null;
     this.isConnected = false;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
+    this.maxReconnectAttempts = 10;
     this.messageQueue = [];
     this.listeners = new Map();
-    this.serverUrl = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
+    this.serverUrl = getServerUrl();
+    
+    console.log(`🔗 Socket服务器地址: ${this.serverUrl}`);
   }
   
   connect() {
@@ -17,14 +39,17 @@ class SocketManager {
     }
     
     this.socket = io(this.serverUrl, {
+      path: '/socket.io',
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: Infinity, // 无限重试
-      timeout: 20000, // 连接超时20秒
-      forceNew: false, // 复用连接
-      autoConnect: true
+      reconnectionDelayMax: 10000,
+      reconnectionAttempts: Infinity,
+      timeout: 20000,
+      forceNew: false,
+      autoConnect: true,
+      // 生产环境启用跨域凭证
+      withCredentials: import.meta.env.PROD
     });
     
     this.setupEventHandlers();

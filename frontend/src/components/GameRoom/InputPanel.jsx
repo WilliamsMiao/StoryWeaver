@@ -21,7 +21,7 @@ function useDebounce(value, delay) {
 }
 
 export default function InputPanel() {
-  const { story, sendMessage, loading, player, room } = useGame();
+  const { story, sendMessage, loading, player, room, storyInitializing } = useGame();
   const [input, setInput] = useState('');
   const [charCount, setCharCount] = useState(0);
   const [messageType, setMessageType] = useState('global'); // 'global' | 'private' | 'player_to_player'
@@ -126,11 +126,22 @@ export default function InputPanel() {
   };
 
   if (!story) {
+    const isHost = room?.hostId === player?.id;
+    
     return (
       <div className="p-3 text-center">
-        <p className="text-sm text-pixel-text-muted font-bold">
-          ⏳ 等待故事初始化...
-        </p>
+        {storyInitializing ? (
+          <div className="flex items-center justify-center gap-2">
+            <span className="animate-spin h-4 w-4 border-2 border-pixel-accent-blue border-t-transparent rounded-full"></span>
+            <p className="text-sm text-pixel-accent-blue font-bold">
+              🚀 故事创建中，AI正在构思精彩开篇...
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-pixel-wood-dark font-bold">
+            {isHost ? '👆 请先在上方创建故事' : '⏳ 等待房主创建故事...'}
+          </p>
+        )}
       </div>
     );
   }
@@ -205,7 +216,7 @@ export default function InputPanel() {
             <div className={`mb-1 px-2 py-1 text-xs font-bold rounded ${
               recipientName 
                 ? 'bg-pixel-accent-green/20 text-pixel-accent-green' 
-                : 'bg-pixel-accent-yellow/20 text-pixel-accent-yellow'
+                : 'bg-pixel-wood-dark/20 text-pixel-wood-dark'
             }`}>
               {recipientName ? (
                 <span>
@@ -237,10 +248,10 @@ export default function InputPanel() {
           
           {/* 字数提示 */}
           <div className="flex justify-between items-center mt-1 text-xs">
-            <span className={`font-bold ${charCount > 900 ? 'text-pixel-accent-red' : 'text-pixel-text-muted'}`}>
+            <span className={`font-bold ${charCount > 900 ? 'text-pixel-accent-red' : 'text-pixel-wood-dark'}`}>
               {charCount}/1000
             </span>
-            <span className="text-pixel-text-muted">
+            <span className="text-pixel-wood-dark font-bold">
               {messageType === 'global' && '💡 全局可见'}
               {messageType === 'private' && '🔒 仅你和AI'}
               {messageType === 'player_to_player' && '👤 玩家私聊'}
