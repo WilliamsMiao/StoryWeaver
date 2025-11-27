@@ -36,10 +36,21 @@ export const GameProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [playersProgress, setPlayersProgress] = useState({}); // 玩家反馈进度
   const [chapterTodos, setChapterTodos] = useState([]); // 章节TODO列表
+  const [storyOutline, setStoryOutline] = useState(null); // ★ 故事大纲（包含地点、物品等）
   const [isRejoining, setIsRejoining] = useState(false); // 是否正在重新加入房间
   const [currentPuzzle, setCurrentPuzzle] = useState(null); // 当前章节谜题
   const [puzzleProgress, setPuzzleProgress] = useState({}); // 谜题解决进度
   const [puzzleSolvedNotification, setPuzzleSolvedNotification] = useState(null); // 解谜成功通知
+  const [myCharacter, setMyCharacter] = useState(null); // 我的角色信息（剧本模式）
+  
+  // ★ 新增：增强功能状态
+  const [skills, setSkills] = useState([]); // 当前角色技能列表
+  const [skillCooldowns, setSkillCooldowns] = useState({}); // 技能冷却状态
+  const [npcs, setNpcs] = useState([]); // 可对话的NPC列表
+  const [npcDialogues, setNpcDialogues] = useState({}); // NPC对话历史 {npcId: messages[]}
+  const [murdererGuide, setMurdererGuide] = useState(null); // 凶手指南（仅凶手可见）
+  const [branchEvents, setBranchEvents] = useState([]); // 当前可用的分支事件
+  const [gameStateData, setGameStateData] = useState(null); // 增强游戏状态
 
     // 初始化Socket连接
   useEffect(() => {
@@ -188,6 +199,11 @@ export const GameProvider = ({ children }) => {
     const handleStoryInitialized = (data) => {
       setStory(data.story);
       setRoom(data.room);
+      // ★ 保存故事大纲 ★
+      if (data.storyOutline) {
+        setStoryOutline(data.storyOutline);
+        console.log('[GameContext] 收到故事大纲:', data.storyOutline);
+      }
     };
     
     const handleStoryMachineInit = (messageData) => {
@@ -275,6 +291,27 @@ export const GameProvider = ({ children }) => {
       }, 5000);
     };
     
+    // 处理角色分配（剧本模式）
+    const handleCharacterAssigned = (data) => {
+      console.log('📚 收到角色分配:', data);
+      setMyCharacter(data.character);
+      
+      // 将角色介绍消息添加到故事机消息中
+      if (data.message) {
+        const characterMessage = {
+          id: `character_${Date.now()}`,
+          type: 'story_machine',
+          visibility: 'private',
+          sender: '故事机',
+          senderId: 'ai',
+          content: data.message,
+          timestamp: new Date(),
+          isPrivate: true
+        };
+        setStoryMachineMessages(prev => [...prev, characterMessage]);
+      }
+    };
+    
     // 处理新谜题
     const handleNewPuzzle = (data) => {
       console.log('收到新谜题:', data);
@@ -290,6 +327,113 @@ export const GameProvider = ({ children }) => {
       setPuzzleProgress({});
     };
     
+    // ★ 新增：处理技能使用结果
+    const handleSkillUsed = (data) => {
+      console.log('技能使用结果:', data);
+      if (data.success) {
+        // 更新技能冷却
+        setSkillCooldowns(prev => ({
+          ...prev,
+          [data.skillId]: {
+            cooldownUntil: new Date(Date.now() + data.cooldown * 1000),
+            remainingUses: data.remainingUses
+          }
+        }));
+        
+        // 如果有结果消息，添加到故事机消息
+        if (data.result) {
+          const resultMessage = {
+            id: `skill_result_${Date.now()}`,
+            type: 'story_machine',
+            visibility: 'private',
+            sender: '系统',
+            senderId: 'system',
+            content: `🔮 **${data.skillName}** 使用成功！\n\n${data.result}`,
+            timestamp: new Date(),
+            isPrivate: true
+          };
+          setStoryMachineMessages(prev => [...prev, resultMessage]);
+        }
+      }
+    };
+    
+    // ★ 新增：处理NPC对话响应
+    const handleNpcDialogueResponse = (data) => {
+      console.log('NPC对话响应:', data);
+      const npcMessage = {
+        id: `npc_${data.npcId}_${Date.now()}`,
+        sender: data.npcName,
+        senderId: data.npcId,
+        content: data.response,
+        timestamp: new Date(),
+        isNpc: true,
+        emotion: data.emotion
+      };
+      
+      setNpcDialogues(prev => ({
+        ...prev,
+        [data.npcId]: [...(prev[data.npcId] || []), npcMessage]
+      }));
+    };
+    
+    // ★ 新增：处理游戏状态更新
+    const handleGameStateUpdate = (data) => {
+      console.log('游戏状态更新:', data);
+      setGameStateData(data);
+      
+      // 更新技能列表
+      if (data.skills) {
+        setSkills(data.skills);
+      }
+      
+      // 更新NPC列表
+      if (data.npcs) {
+        setNpcs(data.npcs);
+      }
+      
+      // 更新分支事件
+      if (data.branchEvents) {
+        setBranchEvents(data.branchEvents);
+      }
+      
+      // 更新凶手指南（仅凶手玩家）
+      if (data.murdererGuide) {
+        setMurdererGuide(data.murdererGuide);
+      }
+    };
+    
+    // ★ 新增：处理分支事件触发
+    const handleBranchEventTriggered = (data) => {
+      console.log('分支事件触发:', data);
+      // 添加系统消息通知
+      const eventMessage = {
+        id: `branch_${Date.now()}`,
+        type: 'system',
+        visibility: 'global',
+        sender: '系统',
+        senderId: 'system',
+        content: `🔀 **剧情转折** - ${data.eventName}\n\n${data.description}`,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, eventMessage]);
+    };
+    
+    // ★ 新增：处理结局触发
+    const handleEndingTriggered = (data) => {
+      console.log('结局触发:', data);
+      const endingMessage = {
+        id: `ending_${Date.now()}`,
+        type: 'chapter',
+        visibility: 'global',
+        sender: 'AI',
+        senderId: 'ai',
+        content: `🎭 **${data.endingType === 'perfect' ? '完美结局' : data.endingType === 'good' ? '好结局' : data.endingType === 'normal' ? '普通结局' : '隐藏结局'}**\n\n${data.content}`,
+        timestamp: new Date(),
+        isEnding: true
+      };
+      setMessages(prev => [...prev, endingMessage]);
+    };
+    
     socketManager.on('connection_status', handleConnectionStatus);
     socketManager.on('room_updated', handleRoomUpdated);
     socketManager.on('new_message', handleNewMessage);
@@ -301,6 +445,13 @@ export const GameProvider = ({ children }) => {
     socketManager.on('puzzle_progress_update', handlePuzzleProgressUpdate);
     socketManager.on('puzzle_all_solved', handlePuzzleAllSolved);
     socketManager.on('new_puzzle', handleNewPuzzle);
+    socketManager.on('character_assigned', handleCharacterAssigned);
+    // ★ 新增：增强功能事件监听
+    socketManager.on('skill_used', handleSkillUsed);
+    socketManager.on('npc_dialogue_response', handleNpcDialogueResponse);
+    socketManager.on('game_state_update', handleGameStateUpdate);
+    socketManager.on('branch_event_triggered', handleBranchEventTriggered);
+    socketManager.on('ending_triggered', handleEndingTriggered);
     
     return () => {
       socketManager.off('connection_status', handleConnectionStatus);
@@ -314,6 +465,13 @@ export const GameProvider = ({ children }) => {
       socketManager.off('puzzle_progress_update', handlePuzzleProgressUpdate);
       socketManager.off('puzzle_all_solved', handlePuzzleAllSolved);
       socketManager.off('new_puzzle', handleNewPuzzle);
+      socketManager.off('character_assigned', handleCharacterAssigned);
+      // ★ 新增：移除增强功能事件监听
+      socketManager.off('skill_used', handleSkillUsed);
+      socketManager.off('npc_dialogue_response', handleNpcDialogueResponse);
+      socketManager.off('game_state_update', handleGameStateUpdate);
+      socketManager.off('branch_event_triggered', handleBranchEventTriggered);
+      socketManager.off('ending_triggered', handleEndingTriggered);
     };
   }, []);
 
@@ -592,6 +750,42 @@ export const GameProvider = ({ children }) => {
     });
   }, [room]);
 
+  // 使用预制剧本初始化故事
+  const initializeWithScript = useCallback((scriptId) => {
+    return new Promise((resolve, reject) => {
+      if (!room) {
+        setError('未加入房间');
+        reject(new Error('未加入房间'));
+        return;
+      }
+      
+      setLoading(true);
+      setStoryInitializing(true);
+      setError(null);
+      
+      console.log('📚 发送 initialize_with_script 请求:', { scriptId });
+      
+      socketManager.emit('initialize_with_script', {
+        scriptId
+      }, (response) => {
+        console.log('📚 收到 initialize_with_script 响应:', response);
+        setLoading(false);
+        setStoryInitializing(false);
+        if (response.error) {
+          setError(response.error);
+          reject(new Error(response.error));
+        } else {
+          setStory(response.room.story);
+          setRoom(response.room);
+          if (response.storyOutline) {
+            setStoryOutline(response.storyOutline);
+          }
+          resolve(response);
+        }
+      });
+    });
+  }, [room]);
+
   // 发送消息
   const sendMessage = useCallback((message, messageType = 'global', recipientId = null, recipientName = null) => {
     if (!room || !player) {
@@ -684,10 +878,134 @@ export const GameProvider = ({ children }) => {
     setDirectMessages([]);
     setUnreadDirectCount(0);
     setError(null);
+    // ★ 新增：清理增强功能状态
+    setSkills([]);
+    setSkillCooldowns({});
+    setNpcs([]);
+    setNpcDialogues({});
+    setMurdererGuide(null);
+    setBranchEvents([]);
+    setGameStateData(null);
     // 清理 localStorage 中的房间和故事信息
     localStorage.removeItem('storyweaver_room');
     localStorage.removeItem('storyweaver_story');
   }, []);
+
+  // ★ 新增：使用技能
+  const useSkill = useCallback((skillId, targetId = null, context = {}) => {
+    return new Promise((resolve, reject) => {
+      if (!room || !player) {
+        setError('未加入房间');
+        reject(new Error('未加入房间'));
+        return;
+      }
+      
+      // 检查冷却
+      const cooldown = skillCooldowns[skillId];
+      if (cooldown && new Date() < new Date(cooldown.cooldownUntil)) {
+        setError('技能冷却中');
+        reject(new Error('技能冷却中'));
+        return;
+      }
+      
+      console.log('🔮 使用技能:', { skillId, targetId, context });
+      
+      socketManager.emit('use_skill', {
+        skillId,
+        targetId,
+        context
+      }, (response) => {
+        if (response.error) {
+          setError(response.error);
+          reject(new Error(response.error));
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }, [room, player, skillCooldowns]);
+
+  // ★ 新增：与NPC对话
+  const chatWithNpc = useCallback((npcId, message, isPublic = true) => {
+    return new Promise((resolve, reject) => {
+      if (!room || !player) {
+        setError('未加入房间');
+        reject(new Error('未加入房间'));
+        return;
+      }
+      
+      // 添加玩家消息到对话历史
+      const playerMessage = {
+        id: `player_${Date.now()}`,
+        sender: player.username,
+        senderId: player.id,
+        content: message,
+        timestamp: new Date(),
+        isNpc: false
+      };
+      
+      setNpcDialogues(prev => ({
+        ...prev,
+        [npcId]: [...(prev[npcId] || []), playerMessage]
+      }));
+      
+      console.log('🤖 与NPC对话:', { npcId, message, isPublic });
+      
+      socketManager.emit('npc_dialogue', {
+        npcId,
+        message,
+        isPublic,
+        conversationHistory: npcDialogues[npcId] || []
+      }, (response) => {
+        if (response.error) {
+          setError(response.error);
+          reject(new Error(response.error));
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }, [room, player, npcDialogues]);
+
+  // ★ 新增：做出游戏选择（触发分支）
+  const makeGameChoice = useCallback((choiceId, choiceData = {}) => {
+    return new Promise((resolve, reject) => {
+      if (!room || !player) {
+        setError('未加入房间');
+        reject(new Error('未加入房间'));
+        return;
+      }
+      
+      console.log('🔀 做出选择:', { choiceId, choiceData });
+      
+      socketManager.emit('game_choice', {
+        choiceId,
+        choiceData
+      }, (response) => {
+        if (response.error) {
+          setError(response.error);
+          reject(new Error(response.error));
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }, [room, player]);
+
+  // ★ 新增：获取游戏状态
+  const refreshGameState = useCallback(() => {
+    if (!room) return;
+    
+    socketManager.emit('get_game_state', {}, (response) => {
+      if (response.success && response.gameState) {
+        setGameStateData(response.gameState);
+        if (response.gameState.skills) setSkills(response.gameState.skills);
+        if (response.gameState.npcs) setNpcs(response.gameState.npcs);
+        if (response.gameState.branchEvents) setBranchEvents(response.gameState.branchEvents);
+        if (response.gameState.murdererGuide) setMurdererGuide(response.gameState.murdererGuide);
+      }
+    });
+  }, [room]);
 
   const value = {
     socketConnected,
@@ -700,6 +1018,8 @@ export const GameProvider = ({ children }) => {
     unreadDirectCount,
     playersProgress,
     chapterTodos,
+    storyOutline, // ★ 新增：故事大纲
+    myCharacter, // ★ 新增：我的角色（剧本模式）
     loading,
     storyInitializing,
     error,
@@ -707,15 +1027,29 @@ export const GameProvider = ({ children }) => {
     currentPuzzle,
     puzzleProgress,
     puzzleSolvedNotification,
+    // ★ 新增：增强功能状态
+    skills,
+    skillCooldowns,
+    npcs,
+    npcDialogues,
+    murdererGuide,
+    branchEvents,
+    gameStateData,
     // 方法
     savePlayer,
     createRoom,
     joinRoom,
     initializeStory,
+    initializeWithScript, // ★ 新增：使用剧本初始化
     sendMessage,
     leaveRoom,
     clearUnreadDirectCount,
-    setError
+    setError,
+    // ★ 新增：增强功能方法
+    useSkill,
+    chatWithNpc,
+    makeGameChoice,
+    refreshGameState
   };
 
   return <GameContext.Provider value={value}>{children}</GameContext.Provider>;

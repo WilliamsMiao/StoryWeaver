@@ -248,6 +248,8 @@ class Database {
         correct_answer TEXT NOT NULL,
         answer_keywords TEXT,
         difficulty INTEGER DEFAULT 3,
+        success_message TEXT,
+        next_step TEXT,
         solved INTEGER DEFAULT 0,
         solved_by TEXT,
         solved_at DATETIME,
@@ -388,6 +390,77 @@ class Database {
         action_description TEXT,
         result TEXT,
         impact_on_story TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (story_id) REFERENCES stories(id),
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id),
+        FOREIGN KEY (player_id) REFERENCES players(id)
+      )
+    `);
+    
+    // ==================== 故事大纲系统 ====================
+    
+    // 故事大纲表 - 存储完整的案件真相和故事走向
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS story_outlines (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL UNIQUE,
+        
+        -- 案件核心信息
+        case_type TEXT NOT NULL,
+        victim_name TEXT NOT NULL,
+        victim_description TEXT,
+        murderer_name TEXT NOT NULL,
+        murderer_motive TEXT NOT NULL,
+        murder_method TEXT NOT NULL,
+        murder_location TEXT NOT NULL,
+        murder_time TEXT,
+        
+        -- 真相和结局
+        full_truth TEXT NOT NULL,
+        key_evidence JSON NOT NULL,
+        red_herrings JSON,
+        
+        -- 章节规划
+        total_chapters INTEGER DEFAULT 3,
+        chapter_goals JSON NOT NULL,
+        
+        -- 可交互地点和物品
+        locations JSON NOT NULL,
+        interactable_items JSON NOT NULL,
+        
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (story_id) REFERENCES stories(id)
+      )
+    `);
+    
+    // 玩家任务表 - 每个玩家的具体任务
+    await this.db.run(`
+      CREATE TABLE IF NOT EXISTS player_tasks (
+        id TEXT PRIMARY KEY,
+        story_id TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        player_id TEXT NOT NULL,
+        
+        -- 任务信息
+        task_type TEXT NOT NULL,
+        task_title TEXT NOT NULL,
+        task_description TEXT NOT NULL,
+        task_target TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        
+        -- 完成条件
+        required_action TEXT NOT NULL,
+        required_keywords JSON,
+        
+        -- 奖励
+        reward_clue TEXT,
+        reward_info TEXT,
+        
+        -- 状态
+        status TEXT DEFAULT 'active',
+        completed_at DATETIME,
+        completion_message TEXT,
+        
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (story_id) REFERENCES stories(id),
         FOREIGN KEY (chapter_id) REFERENCES chapters(id),
@@ -1266,11 +1339,14 @@ class Database {
    * @param {Object} puzzle - 谜题数据
    */
   async createChapterPuzzle(puzzle) {
-    const { id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty = 3 } = puzzle;
+    const { 
+      id, chapterId, storyId, puzzleQuestion, correctAnswer, 
+      answerKeywords, difficulty = 3, successMessage, nextStep 
+    } = puzzle;
     await this.db.run(
-      `INSERT INTO chapter_puzzles (id, chapter_id, story_id, puzzle_question, correct_answer, answer_keywords, difficulty)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty]
+      `INSERT INTO chapter_puzzles (id, chapter_id, story_id, puzzle_question, correct_answer, answer_keywords, difficulty, success_message, next_step)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, chapterId, storyId, puzzleQuestion, correctAnswer, answerKeywords, difficulty, successMessage || '✅ 正确！', nextStep || '继续调查...']
     );
   }
 
@@ -1749,7 +1825,154 @@ class Database {
       [storyId]
     );
   }
+
+  // ==================== 故事大纲系统 ====================
+
+  /**
+   * 创建故事大纲
+   */
+  async createStoryOutline(outline) {
+    const {
+      id, storyId, caseType, victimName, victimDescription,
+      murdererName, murdererMotive, murderMethod, murderLocation, murderTime,
+      fullTruth, keyEvidence, redHerrings, totalChapters, chapterGoals,
+      locations, interactableItems
+    } = outline;
+    
+    await this.db.run(
+      `INSERT INTO story_outlines (
+        id, story_id, case_type, victim_name, victim_description,
+        murderer_name, murderer_motive, murder_method, murder_location, murder_time,
+        full_truth, key_evidence, red_herrings, total_chapters, chapter_goals,
+        locations, interactable_items
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, storyId, caseType, victimName, victimDescription,
+        murdererName, murdererMotive, murderMethod, murderLocation, murderTime,
+        fullTruth, JSON.stringify(keyEvidence), JSON.stringify(redHerrings || []),
+        totalChapters || 3, JSON.stringify(chapterGoals),
+        JSON.stringify(locations), JSON.stringify(interactableItems)
+      ]
+    );
+  }
+
+  /**
+   * 获取故事大纲
+   */
+  async getStoryOutline(storyId) {
+    const outline = await this.db.get(
+      'SELECT * FROM story_outlines WHERE story_id = ?',
+      [storyId]
+    );
+    if (outline) {
+      outline.key_evidence = JSON.parse(outline.key_evidence || '[]');
+      outline.red_herrings = JSON.parse(outline.red_herrings || '[]');
+      outline.chapter_goals = JSON.parse(outline.chapter_goals || '[]');
+      outline.locations = JSON.parse(outline.locations || '[]');
+      outline.interactable_items = JSON.parse(outline.interactable_items || '[]');
+    }
+    return outline;
+  }
+
+  // ==================== 任务系统 ====================
+
+  /**
+   * 创建玩家任务
+   */
+  async createPlayerTask(task) {
+    const {
+      id, storyId, chapterId, playerId, taskType, taskTitle, taskDescription,
+      taskTarget, targetType, requiredAction, requiredKeywords,
+      rewardClue, rewardInfo
+    } = task;
+    
+    await this.db.run(
+      `INSERT INTO player_tasks (
+        id, story_id, chapter_id, player_id, task_type, task_title, task_description,
+        task_target, target_type, required_action, required_keywords,
+        reward_clue, reward_info
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, storyId, chapterId, playerId, taskType, taskTitle, taskDescription,
+        taskTarget, targetType, requiredAction, JSON.stringify(requiredKeywords || []),
+        rewardClue, rewardInfo
+      ]
+    );
+  }
+
+  /**
+   * 获取玩家当前任务（按章节）
+   */
+  async getPlayerTasks(chapterId, playerId, status = 'active') {
+    const tasks = await this.db.all(
+      `SELECT * FROM player_tasks 
+       WHERE chapter_id = ? AND player_id = ? AND status = ?
+       ORDER BY created_at ASC`,
+      [chapterId, playerId, status]
+    );
+    return tasks.map(t => ({
+      ...t,
+      required_keywords: JSON.parse(t.required_keywords || '[]')
+    }));
+  }
+
+  /**
+   * 获取玩家所有任务（包括已完成）
+   */
+  async getAllPlayerTasks(storyId, playerId) {
+    const tasks = await this.db.all(
+      `SELECT * FROM player_tasks 
+       WHERE story_id = ? AND player_id = ?
+       ORDER BY created_at ASC`,
+      [storyId, playerId]
+    );
+    return tasks.map(t => ({
+      ...t,
+      required_keywords: JSON.parse(t.required_keywords || '[]')
+    }));
+  }
+
+  /**
+   * 完成任务
+   */
+  async completeTask(taskId, completionMessage) {
+    await this.db.run(
+      `UPDATE player_tasks 
+       SET status = 'completed', completed_at = CURRENT_TIMESTAMP, completion_message = ?
+       WHERE id = ?`,
+      [completionMessage, taskId]
+    );
+  }
+
+  /**
+   * 检查任务是否可以完成
+   */
+  async checkTaskCompletion(taskId, playerAction, keywords) {
+    const task = await this.db.get('SELECT * FROM player_tasks WHERE id = ?', [taskId]);
+    if (!task) return { canComplete: false, reason: '任务不存在' };
+    
+    const requiredKeywords = JSON.parse(task.required_keywords || '[]');
+    const actionLower = playerAction.toLowerCase();
+    
+    // 检查是否包含必需的关键词
+    const matchedKeywords = requiredKeywords.filter(kw => 
+      actionLower.includes(kw.toLowerCase())
+    );
+    
+    if (matchedKeywords.length >= Math.ceil(requiredKeywords.length * 0.5)) {
+      return { 
+        canComplete: true, 
+        task,
+        matchedKeywords 
+      };
+    }
+    
+    return { 
+      canComplete: false, 
+      reason: '行动不符合任务要求',
+      hint: `提示：尝试 ${task.required_action}`
+    };
+  }
 }
 
 export default new Database();
-

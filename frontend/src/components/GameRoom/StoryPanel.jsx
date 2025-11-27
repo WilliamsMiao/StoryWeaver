@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { useGame } from '../../context/GameContext';
 import CharacterCard from './CharacterCard';
+import ScriptSelector from './ScriptSelector';
 import socketManager from '../../utils/socket';
 
 export default function StoryPanel() {
   const { 
     story, messages, room, storyMachineMessages, directMessages, 
     unreadDirectCount, clearUnreadDirectCount, player, initializeStory, 
-    storyInitializing, currentPuzzle, puzzleProgress, puzzleSolvedNotification 
+    storyInitializing, currentPuzzle, puzzleProgress, puzzleSolvedNotification,
+    initializeWithScript
   } = useGame();
   const messagesEndRef = useRef(null);
   const [viewMode, setViewMode] = useState('global'); // 'global' | 'storyMachine' | 'direct'
@@ -15,6 +17,7 @@ export default function StoryPanel() {
   // 故事初始化相关状态
   const isHost = room?.hostId === player?.id;
   const [showInitForm, setShowInitForm] = useState(false);
+  const [showScriptSelector, setShowScriptSelector] = useState(false); // 显示剧本选择器
   const [storyTitle, setStoryTitle] = useState('');
   const [storyBackground, setStoryBackground] = useState('');
   
@@ -142,6 +145,18 @@ export default function StoryPanel() {
     }
   };
 
+  // 使用预制剧本开始游戏
+  const handleSelectScript = async (script) => {
+    console.log('📚 选择剧本开始游戏:', script);
+    try {
+      await initializeWithScript(script.id);
+      console.log('✅ 剧本加载成功');
+      setShowScriptSelector(false);
+    } catch (err) {
+      console.error('❌ 剧本加载失败:', err);
+    }
+  };
+
   if (!story) {
     // 正在创建故事中 - 显示加载界面
     if (storyInitializing) {
@@ -214,21 +229,48 @@ export default function StoryPanel() {
           <div className="text-7xl mb-6 animate-bounce" style={{ animationDuration: '2s' }}>📖</div>
           
           {isHost ? (
-            // 房主视图：直接显示初始化表单
-            !showInitForm ? (
+            // 房主视图
+            showScriptSelector ? (
+              // 剧本选择器
+              <div className="card bg-pixel-panel p-6">
+                <ScriptSelector 
+                  onSelect={handleSelectScript}
+                  onCancel={() => setShowScriptSelector(false)}
+                />
+              </div>
+            ) : !showInitForm ? (
               <div className="space-y-4">
                 <h2 className="text-2xl font-bold text-pixel-wood-dark" style={{ textShadow: '2px 2px 0 #fff' }}>
                   开启你的冒险！
                 </h2>
                 <p className="text-pixel-text-muted">
-                  作为房主，你可以创建一个全新的故事世界
+                  作为房主，你可以选择一个预制剧本或创建自由故事
                 </p>
-                <button
-                  onClick={() => setShowInitForm(true)}
-                  className="btn-primary text-lg px-8 py-3 mt-4"
-                >
-                  🎮 创建故事
-                </button>
+                
+                {/* 两种模式选择 */}
+                <div className="grid grid-cols-1 gap-3 mt-6">
+                  <button
+                    onClick={() => setShowScriptSelector(true)}
+                    className="btn-primary text-lg px-8 py-4 flex items-center justify-center gap-3"
+                  >
+                    <span className="text-2xl">📚</span>
+                    <div className="text-left">
+                      <div className="font-bold">选择剧本</div>
+                      <div className="text-xs opacity-80">使用预制的剧本杀剧本</div>
+                    </div>
+                  </button>
+                  
+                  <button
+                    onClick={() => setShowInitForm(true)}
+                    className="btn-secondary text-lg px-8 py-4 flex items-center justify-center gap-3"
+                  >
+                    <span className="text-2xl">✨</span>
+                    <div className="text-left">
+                      <div className="font-bold">自由创作</div>
+                      <div className="text-xs opacity-80">AI 实时生成故事</div>
+                    </div>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="card bg-pixel-panel p-6">

@@ -136,8 +136,22 @@ class AIService {
       recentChapters: (context.chapters || []).slice(-3),
       shortTermMemories: context.shortTermMemories || memoryContext.shortTermMemories || [],
       chapterMemories: context.chapterMemories || memoryContext.chapterMemories || [],
-      longTermMemories: context.longTermMemories || memoryContext.longTermMemories || []
+      longTermMemories: context.longTermMemories || memoryContext.longTermMemories || [],
+      // ★ 预制剧本支持 ★
+      isPrebuiltScript: context.isPrebuiltScript || false,
+      script: context.script || null,
+      storyOutline: context.storyOutline || context.outline || null,
+      playerCharacter: context.playerCharacter || null // 当前玩家的角色信息
     };
+    
+    // 如果是预制剧本模式，检查是否有增强数据
+    if (fullContext.isPrebuiltScript && fullContext.script) {
+      // 优先使用增强版响应（如果有叙事诡计、NPC人格等数据）
+      if (fullContext.script.narrativeTricks || fullContext.script.npcPersonas) {
+        return this.generateEnhancedScriptResponse(fullContext, playerInput, options);
+      }
+      return this.generateScriptBasedResponse(fullContext, playerInput, options);
+    }
     
     // 使用请求队列执行AI请求
     try {
@@ -162,6 +176,645 @@ class AIService {
       // 标准化错误响应
       throw this.standardizeError(error, duration);
     }
+  }
+  
+  /**
+   * 基于预制剧本生成响应
+   * AI会参考剧本内容，但动态响应玩家行为
+   */
+  async generateScriptBasedResponse(context, playerInput, options = {}) {
+    const startTime = Date.now();
+    const script = context.script;
+    const outline = context.storyOutline;
+    const playerCharacter = context.playerCharacter;
+    
+    // 构建剧本感知的系统提示
+    const systemPrompt = this.buildScriptAwareSystemPrompt(script, outline, playerCharacter, context);
+    
+    // 构建消息历史
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...this.buildConversationHistory(context),
+      { role: 'user', content: playerInput }
+    ];
+    
+    try {
+      const response = await this.requestQueue.enqueue(
+        () => this.provider.callAPI(messages, { 
+          temperature: 0.7, 
+          max_tokens: 800 
+        }),
+        {
+          priority: options.priority || 0,
+          timeout: options.timeout || 30000
+        }
+      );
+      
+      const duration = Date.now() - startTime;
+      
+      return this.standardizeResponse(response, {
+        duration,
+        success: true
+      });
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      throw this.standardizeError(error, duration);
+    }
+  }
+  
+  /**
+   * 构建剧本感知的系统提示
+   */
+  buildScriptAwareSystemPrompt(script, outline, playerCharacter, context) {
+    const currentChapter = context.currentChapter || 1;
+    const chapterData = script.chapters?.find(c => c.chapterNumber === currentChapter) || script.chapters?.[0];
+    
+    let prompt = `你是一个剧本杀游戏的故事机/主持人AI。你正在主持一场基于预制剧本的游戏。
+
+## 剧本信息
+- 标题: ${script.title}
+- 主题: ${script.theme}
+- 当前章节: 第${currentChapter}章 - ${chapterData?.title || ''}
+
+## 案件真相（仅供你参考，绝对不能直接透露给玩家！）
+- 受害者: ${outline?.victimName}
+- 案发时间: ${outline?.murderTime}
+- 案发地点: ${outline?.murderLocation}
+- 真相概要: ${outline?.fullTruth?.substring(0, 200)}...
+
+## 本章目标
+${chapterData?.chapterGoal || '引导玩家调查案件'}
+
+## 可用地点
+${script.locations?.map(l => `- ${l.name}: ${l.description}`).join('\n') || '暂无'}
+
+## 可发现线索（本章可揭示）
+${script.clues?.filter(c => c.revealChapter <= currentChapter).map(c => 
+  `- ${c.name} (在${c.discoveryLocation}): ${c.content?.substring(0, 50)}...`
+).join('\n') || '暂无'}`;
+
+    // 如果有玩家角色信息，添加角色上下文
+    if (playerCharacter) {
+      prompt += `
+
+## 当前交互玩家的角色
+- 角色名: ${playerCharacter.name}
+- 身份: ${playerCharacter.occupation}
+- 玩家知道的秘密: ${playerCharacter.secretInfo || '无'}
+- 个人目标: ${playerCharacter.personalGoal || '找出真凶'}`;
+    }
+
+    prompt += `
+
+## 你的职责
+1. **动态响应**：根据玩家的行动给出合理的反馈，不要机械地念剧本
+2. **引导探索**：当玩家靠近线索时，给予适当暗示
+3. **维护悬念**：不要过早透露真相，让玩家自己推理
+4. **角色扮演**：当玩家与NPC对话时，扮演该NPC进行互动
+5. **氛围营造**：保持悬疑紧张的氛围
+
+## 回复规则
+- 使用第二人称"你"
+- 回复控制在100-200字
+- 如果玩家搜索正确地点，可以让他们发现线索
+- 如果玩家询问NPC，根据NPC的性格和所知信息回应
+- 始终保持游戏的趣味性和互动性`;
+
+    return prompt;
+  }
+  
+  /**
+   * 构建对话历史
+   */
+  buildConversationHistory(context) {
+    const history = [];
+    const recentInteractions = context.shortTermMemories?.slice(-6) || [];
+    
+    recentInteractions.forEach(interaction => {
+      if (interaction.input) {
+        history.push({ role: 'user', content: interaction.input });
+      }
+      if (interaction.response) {
+        history.push({ role: 'assistant', content: interaction.response });
+      }
+    });
+    
+    return history;
+  }
+
+  /**
+   * 生成增强版剧本响应（使用完整剧本数据）
+   * 支持叙事诡计、NPC人格、情感弧线等高级功能
+   */
+  async generateEnhancedScriptResponse(context, playerInput, options = {}) {
+    const startTime = Date.now();
+    const script = context.script;
+    const currentChapter = context.currentChapter || 1;
+    
+    // 获取增强数据
+    const narrativeTricks = script.narrativeTricks || [];
+    const storyLayers = script.storyLayers || [];
+    const dynamicEvents = script.dynamicEvents || [];
+    const npcPersonas = script.npcPersonas || [];
+
+    // 检查是否触发动态事件
+    const triggeredEvent = this.checkDynamicEventTrigger(playerInput, dynamicEvents, currentChapter);
+
+    // 构建增强系统提示
+    const systemPrompt = this.buildEnhancedSystemPrompt({
+      script,
+      currentChapter,
+      narrativeTricks,
+      storyLayers,
+      triggeredEvent,
+      playerCharacter: context.playerCharacter
+    });
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...this.buildConversationHistory(context),
+      { role: 'user', content: playerInput }
+    ];
+
+    try {
+      const response = await this.requestQueue.enqueue(
+        () => this.provider.callAPI(messages, {
+          temperature: 0.75,
+          max_tokens: 900
+        }),
+        {
+          priority: options.priority || 0,
+          timeout: options.timeout || 35000
+        }
+      );
+
+      const duration = Date.now() - startTime;
+      
+      let finalResponse = this.standardizeResponse(response, { duration, success: true });
+      
+      // 如果触发了动态事件，添加事件描述
+      if (triggeredEvent) {
+        finalResponse.dynamicEvent = triggeredEvent;
+        finalResponse.content = `${triggeredEvent.eventDescription}\n\n${finalResponse.content}`;
+      }
+
+      return finalResponse;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      throw this.standardizeError(error, duration);
+    }
+  }
+
+  /**
+   * 构建增强版系统提示
+   */
+  buildEnhancedSystemPrompt({ script, currentChapter, narrativeTricks, storyLayers, triggeredEvent, playerCharacter }) {
+    const chapterData = script.chapters?.find(c => c.chapter_number === currentChapter) || script.chapters?.[0];
+    const truth = script.truth;
+    
+    // 获取当前可揭示的故事层
+    const visibleLayers = storyLayers.filter(l => 
+      l.reveal_chapter <= currentChapter || l.layer_type === 'surface'
+    );
+
+    let prompt = `你是一个专业的剧本杀游戏主持人（故事机），正在主持一场精心设计的悬疑推理游戏。
+
+## 🎭 剧本核心信息
+- **标题**: ${script.title}
+- **当前章节**: 第${currentChapter}章 - ${chapterData?.title || ''}
+- **章节目标**: ${chapterData?.chapter_goal || '推进调查'}
+- **氛围**: ${script.atmosphere || '悬疑紧张'}
+
+## 🔍 案件真相（绝对保密！）
+- 受害者: ${truth?.victim_name}
+- 凶手: ${script.characters?.find(c => c.is_murderer)?.name || '待揭晓'}
+- 动机: ${truth?.murder_motive}
+- 手法: ${truth?.murder_method}
+- 案发时间: ${truth?.murder_time}
+- 案发地点: ${truth?.murder_location}
+
+## 📚 故事层级（根据进度逐步揭示）
+${visibleLayers.map(l => `【${l.layer_title}】${l.layer_content?.substring(0, 100)}...`).join('\n\n')}`;
+
+    // 添加叙事诡计提示（如果存在）
+    if (narrativeTricks.length > 0) {
+      const relevantTricks = narrativeTricks.filter(t => t.trigger_chapter >= currentChapter);
+      if (relevantTricks.length > 0) {
+        prompt += `
+
+## 🎪 叙事诡计（暗中引导）
+${relevantTricks.map(t => `- **${t.trick_name}** (${t.trick_type}): ${t.trick_description?.substring(0, 80)}...`).join('\n')}
+【注意】这些诡计应该在玩家不知情的情况下影响他们的判断，不要直接提及。`;
+      }
+    }
+
+    // 如果有动态事件触发
+    if (triggeredEvent) {
+      prompt += `
+
+## ⚡ 突发事件
+刚刚触发了一个动态事件：${triggeredEvent.eventName}
+事件描述：${triggeredEvent.eventDescription}
+氛围效果：${triggeredEvent.atmosphereEffect}
+请在回复中自然地融入这个事件。`;
+    }
+
+    // 玩家角色信息
+    if (playerCharacter) {
+      prompt += `
+
+## 👤 当前玩家角色
+- 角色名: ${playerCharacter.name}
+- 职业: ${playerCharacter.occupation}
+- 已知秘密: ${playerCharacter.secret_info || '无'}
+- 个人目标: ${playerCharacter.personal_goal || '找出真凶'}
+- 技能: ${playerCharacter.skills?.map(s => s.skill_name).join('、') || '无特殊技能'}`;
+    }
+
+    prompt += `
+
+## 🎯 AI主持人职责
+1. **灵魂导演**: 你不是在念剧本，而是在导演一场精彩的推理游戏
+2. **动态叙事**: 根据玩家行为即兴发挥，创造沉浸式体验
+3. **节奏控制**: 紧张与舒缓交替，保持玩家的参与感
+4. **线索引导**: 玩家接近真相时给予微妙暗示，偏离时轻轻拉回
+5. **情感深度**: 让每个NPC都有血有肉，让玩家能感受到角色的情感
+6. **悬念维护**: 真相只在最后揭晓，过程要充满转折
+
+## 📝 回复格式要求
+- 使用第二人称叙述
+- 回复100-250字
+- 如果涉及NPC对话，用引号标注
+- 描述环境时营造相应氛围
+- 保持叙事的连贯性和戏剧性`;
+
+    return prompt;
+  }
+
+  /**
+   * 检查动态事件触发
+   */
+  checkDynamicEventTrigger(playerInput, dynamicEvents, currentChapter) {
+    const lowerInput = playerInput.toLowerCase();
+    
+    for (const event of dynamicEvents) {
+      if (event.earliest_chapter > currentChapter || event.latest_chapter < currentChapter) {
+        continue;
+      }
+      
+      const trigger = event.trigger_condition;
+      
+      // 根据触发类型检查
+      switch (event.trigger_type) {
+        case 'keyword':
+          if (trigger.keywords?.some(kw => lowerInput.includes(kw.toLowerCase()))) {
+            return event;
+          }
+          break;
+        case 'search_action':
+          if (lowerInput.includes('搜索') || lowerInput.includes('检查') || lowerInput.includes('调查')) {
+            return event;
+          }
+          break;
+        case 'accusation':
+          if (lowerInput.includes('指认') || lowerInput.includes('凶手是') || lowerInput.includes('怀疑')) {
+            return event;
+          }
+          break;
+        case 'random':
+          if (Math.random() < (trigger.probability || 0.1)) {
+            return event;
+          }
+          break;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * 生成凶手玩家专属引导
+   */
+  async generateMurdererGuidance(scriptId, currentChapter, gameContext) {
+    const scriptDatabase = (await import('../script-factory/database.js')).default;
+    const guide = await scriptDatabase.getMurdererGuide(scriptId, currentChapter);
+    
+    if (!guide || guide.length === 0) {
+      return null;
+    }
+
+    const chapterGuide = guide[0];
+    
+    // 根据当前游戏状态选择最相关的建议
+    const relevantTips = {
+      strategy: chapterGuide.strategy_tips?.slice(0, 2) || [],
+      speech: chapterGuide.speech_suggestions?.slice(0, 2) || [],
+      danger: chapterGuide.danger_signals?.slice(0, 2) || [],
+      safe: chapterGuide.safe_topics?.slice(0, 2) || []
+    };
+
+    return {
+      chapter: currentChapter,
+      tips: relevantTips,
+      message: `【凶手专属提示】\n策略：${relevantTips.strategy[0] || '保持冷静'}\n安全话题：${relevantTips.safe.join('、') || '环境细节'}`
+    };
+  }
+
+
+  /**
+   * 生成完整故事大纲（游戏初始化时调用）
+   * 这是整个游戏的核心！确定案件真相、凶手、证据、章节目标等
+   */
+  async generateStoryOutline(title, background, players, options = {}) {
+    if (!this.provider) {
+      throw new Error('AI提供商未初始化');
+    }
+    await this.ensureProviderAvailability();
+
+    const playerCount = players.length;
+    const playerNames = players.map(p => p.username).join('、');
+
+    const systemPrompt = `你是一个顶级剧本杀游戏设计师。你需要设计一个完整的剧本杀案件大纲。
+
+## 核心要求：
+1. **案件必须有明确真相**：凶手是谁、动机是什么、如何作案、关键证据在哪里
+2. **章节目标清晰**：每章玩家需要完成什么任务才能推进
+3. **地点和物品可交互**：玩家可以去具体地点、检查具体物品来获取线索
+4. **线索分布合理**：关键证据分散在不同地点，需要玩家合作
+
+## 玩家数量：${playerCount}人
+## 玩家列表：${playerNames}
+
+## 返回格式（严格JSON）：
+{
+  "caseType": "谋杀案/失踪案/盗窃案",
+  "victimName": "受害者姓名",
+  "victimDescription": "受害者身份描述（50字内）",
+  "murdererName": "凶手姓名（必须是NPC，不能是玩家）",
+  "murdererMotive": "作案动机（100字内）",
+  "murderMethod": "作案手法详细描述（100字内）",
+  "murderLocation": "案发地点",
+  "murderTime": "案发时间",
+  "fullTruth": "完整真相描述（200字内，包含所有关键信息）",
+  "keyEvidence": [
+    {
+      "name": "证据名称",
+      "location": "证据所在位置",
+      "description": "证据描述",
+      "importance": "关键/重要/辅助",
+      "discoveryHint": "发现这个证据的提示"
+    }
+  ],
+  "redHerrings": [
+    {
+      "name": "误导线索名称",
+      "description": "为什么这是误导",
+      "location": "位置"
+    }
+  ],
+  "locations": [
+    {
+      "name": "地点名称",
+      "description": "地点描述",
+      "canInvestigate": true,
+      "items": ["可检查的物品1", "可检查的物品2"],
+      "cluesHere": ["这里可以发现的线索ID"]
+    }
+  ],
+  "interactableItems": [
+    {
+      "name": "物品名称",
+      "location": "所在位置",
+      "description": "物品描述",
+      "hiddenInfo": "检查后能发现的信息",
+      "keywords": ["检查", "查看", "调查"]
+    }
+  ],
+  "chapterGoals": [
+    {
+      "chapter": 1,
+      "title": "章节标题",
+      "mainObjective": "主要目标描述",
+      "subTasks": [
+        {
+          "task": "具体任务描述",
+          "target": "任务目标（地点/物品/NPC）",
+          "targetType": "location/item/npc",
+          "reward": "完成后获得的信息"
+        }
+      ],
+      "successCondition": "本章成功条件",
+      "puzzleQuestion": "本章核心谜题",
+      "puzzleAnswer": "谜题答案",
+      "puzzleKeywords": ["答案关键词1", "答案关键词2"]
+    }
+  ],
+  "npcs": [
+    {
+      "name": "NPC姓名",
+      "role": "NPC身份",
+      "personality": "性格特点",
+      "secret": "隐藏秘密",
+      "alibi": "不在场证明（如有）",
+      "suspicionLevel": 0-10
+    }
+  ]
+}`;
+
+    const userPrompt = `请为以下剧本杀游戏设计完整的案件大纲：
+
+游戏标题：${title}
+背景设定：${background || '神秘的古老庄园'}
+玩家人数：${playerCount}人
+
+要求：
+1. 设计一个有趣的谋杀案
+2. 凶手必须是NPC，不是玩家
+3. 设计3个章节的目标
+4. 每章至少2个可完成的任务
+5. 设计5-8个可交互地点
+6. 设计10个以上可检查的物品
+7. 关键证据必须分散在不同地点
+
+请返回完整的JSON格式大纲。`;
+
+    try {
+      console.log('[故事大纲] 开始生成故事大纲...');
+      const response = await this.requestQueue.enqueue(
+        () => this.provider.callAPI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ], {
+          temperature: 0.8,
+          max_tokens: 3000
+        }),
+        {
+          priority: 0,
+          timeout: options.timeout || 60000
+        }
+      );
+
+      // 解析JSON
+      const content = response.content || response.text || '';
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('AI返回格式错误，无法解析故事大纲');
+      }
+
+      const outline = JSON.parse(jsonMatch[0]);
+      console.log('[故事大纲] 故事大纲生成成功');
+      console.log(`  - 案件类型: ${outline.caseType}`);
+      console.log(`  - 受害者: ${outline.victimName}`);
+      console.log(`  - 凶手: ${outline.murdererName}`);
+      console.log(`  - 地点数: ${outline.locations?.length || 0}`);
+      console.log(`  - 章节数: ${outline.chapterGoals?.length || 0}`);
+
+      return outline;
+    } catch (error) {
+      console.error('[故事大纲] 生成失败:', error.message);
+      // 返回默认大纲
+      return this.generateDefaultOutline(title, background, players);
+    }
+  }
+
+  /**
+   * 生成默认故事大纲（AI失败时的备用）
+   */
+  generateDefaultOutline(title, background, players) {
+    return {
+      caseType: '谋杀案',
+      victimName: '维克多·布莱克',
+      victimDescription: '庄园主人，在书房被发现死亡',
+      murdererName: '詹姆斯管家',
+      murdererMotive: '主人发现他多年来一直在挪用庄园资金',
+      murderMethod: '用书房的烛台击打后伪造成意外',
+      murderLocation: '书房',
+      murderTime: '昨晚10点左右',
+      fullTruth: '詹姆斯管家多年来一直挪用庄园资金，维克多发现后威胁要报警。詹姆斯趁维克多独自在书房时，用烛台将其击倒，并伪造成不慎跌倒的意外。',
+      keyEvidence: [
+        { name: '带血的烛台', location: '书房壁炉旁', description: '被擦拭过但仍有血迹残留', importance: '关键', discoveryHint: '检查壁炉附近' },
+        { name: '账本', location: '书房保险柜', description: '记录了资金异常', importance: '关键', discoveryHint: '调查保险柜' },
+        { name: '沾有泥土的手套', location: '厨房垃圾桶', description: '管家的手套，沾有书房地毯的纤维', importance: '重要', discoveryHint: '搜查厨房' }
+      ],
+      redHerrings: [
+        { name: '破碎的酒杯', description: '看似争斗痕迹，实为转移注意力', location: '书房' }
+      ],
+      locations: [
+        { name: '书房', description: '案发现场，维克多的私人空间', canInvestigate: true, items: ['书桌', '书架', '壁炉', '保险柜', '地毯'], cluesHere: ['烛台', '账本'] },
+        { name: '厨房', description: '仆人们工作的地方', canInvestigate: true, items: ['橱柜', '垃圾桶', '刀架'], cluesHere: ['手套'] },
+        { name: '花园', description: '庄园的后花园', canInvestigate: true, items: ['花圃', '工具房', '长椅'], cluesHere: [] },
+        { name: '客厅', description: '庄园的接待区', canInvestigate: true, items: ['沙发', '壁炉', '相框'], cluesHere: [] },
+        { name: '管家房间', description: '詹姆斯的住处', canInvestigate: true, items: ['衣柜', '床头柜', '日记本'], cluesHere: [] }
+      ],
+      interactableItems: [
+        { name: '书桌', location: '书房', description: '维克多的办公桌', hiddenInfo: '抽屉里有一封未完成的信', keywords: ['检查', '调查', '查看'] },
+        { name: '保险柜', location: '书房', description: '嵌入墙壁的保险柜', hiddenInfo: '里面有账本和一些文件', keywords: ['打开', '检查', '调查'] },
+        { name: '垃圾桶', location: '厨房', description: '厨房角落的垃圾桶', hiddenInfo: '有一双沾有泥土的手套', keywords: ['翻找', '检查', '查看'] }
+      ],
+      chapterGoals: [
+        {
+          chapter: 1,
+          title: '发现真相',
+          mainObjective: '调查案发现场，收集初步证据',
+          subTasks: [
+            { task: '检查书房的书桌', target: '书桌', targetType: 'item', reward: '发现未完成的信件' },
+            { task: '调查壁炉附近', target: '壁炉', targetType: 'item', reward: '发现可疑的烛台' }
+          ],
+          successCondition: '发现至少一件关键证据',
+          puzzleQuestion: '凶手用什么凶器行凶？',
+          puzzleAnswer: '烛台',
+          puzzleKeywords: ['烛台', '蜡烛台', '铜烛台']
+        },
+        {
+          chapter: 2,
+          title: '追查线索',
+          mainObjective: '扩大调查范围，询问相关人员',
+          subTasks: [
+            { task: '搜查厨房', target: '厨房', targetType: 'location', reward: '发现管家的手套' },
+            { task: '调查保险柜', target: '保险柜', targetType: 'item', reward: '发现账本异常' }
+          ],
+          successCondition: '收集到指向凶手的证据',
+          puzzleQuestion: '谁是凶手？他的动机是什么？',
+          puzzleAnswer: '詹姆斯管家，因为挪用资金被发现',
+          puzzleKeywords: ['詹姆斯', '管家', '挪用', '资金', '账目']
+        },
+        {
+          chapter: 3,
+          title: '揭露真相',
+          mainObjective: '整合所有证据，指控凶手',
+          subTasks: [
+            { task: '整理所有证据', target: '证据', targetType: 'item', reward: '完整的案件链' },
+            { task: '对质凶手', target: '詹姆斯管家', targetType: 'npc', reward: '凶手认罪' }
+          ],
+          successCondition: '成功指认凶手并说明动机和手法',
+          puzzleQuestion: '请完整描述案件经过',
+          puzzleAnswer: '詹姆斯管家因挪用资金被发现，用烛台杀害主人并伪装成意外',
+          puzzleKeywords: ['詹姆斯', '挪用', '烛台', '意外', '伪装']
+        }
+      ],
+      npcs: [
+        { name: '詹姆斯管家', role: '庄园管家', personality: '表面恭敬，内心焦虑', secret: '多年挪用资金', alibi: '声称在厨房准备晚餐', suspicionLevel: 8 },
+        { name: '玛丽女仆', role: '庄园女仆', personality: '胆小，但观察力强', secret: '暗恋管家', alibi: '在房间休息', suspicionLevel: 3 },
+        { name: '罗伯特侄子', role: '维克多的侄子', personality: '贪婪，急于继承遗产', secret: '欠了赌债', alibi: '在客厅看书', suspicionLevel: 6 }
+      ]
+    };
+  }
+
+  /**
+   * 根据大纲生成玩家任务
+   */
+  async generatePlayerTasks(outline, chapterNumber, players, options = {}) {
+    const chapterGoal = outline.chapterGoals?.find(g => g.chapter === chapterNumber);
+    if (!chapterGoal) {
+      console.warn(`[任务生成] 章节 ${chapterNumber} 目标不存在，使用默认任务`);
+      return this.generateDefaultTasks(players, chapterNumber);
+    }
+
+    const tasks = [];
+    const availableTasks = [...(chapterGoal.subTasks || [])];
+    
+    // 为每个玩家分配任务
+    for (let i = 0; i < players.length; i++) {
+      const player = players[i];
+      // 循环分配任务，确保每个玩家都有任务
+      const taskIndex = i % availableTasks.length;
+      const taskTemplate = availableTasks[taskIndex];
+      
+      tasks.push({
+        playerId: player.id,
+        playerName: player.username,
+        taskType: 'investigation',
+        taskTitle: taskTemplate.task,
+        taskDescription: `前往${taskTemplate.target}进行调查`,
+        taskTarget: taskTemplate.target,
+        targetType: taskTemplate.targetType,
+        requiredAction: `调查${taskTemplate.target}`,
+        requiredKeywords: [taskTemplate.target, '检查', '调查', '查看'],
+        rewardClue: taskTemplate.reward,
+        rewardInfo: `完成任务后你将获得重要信息`
+      });
+    }
+
+    return tasks;
+  }
+
+  /**
+   * 生成默认任务
+   */
+  generateDefaultTasks(players, chapterNumber) {
+    return players.map((player, index) => ({
+      playerId: player.id,
+      playerName: player.username,
+      taskType: 'investigation',
+      taskTitle: `调查线索 ${index + 1}`,
+      taskDescription: '寻找案件相关的线索',
+      taskTarget: '案发现场',
+      targetType: 'location',
+      requiredAction: '在房间内搜索',
+      requiredKeywords: ['搜索', '检查', '调查', '查看'],
+      rewardClue: '你发现了一些可疑的痕迹',
+      rewardInfo: '继续深入调查'
+    }));
   }
   
   /**
@@ -478,70 +1131,110 @@ ${chapterContent}
    * @param {Object} storyContext - 故事上下文
    * @param {Array} players - 玩家列表 [{id, username, role}]
    * @param {Object} options - 选项
+   * @param {Object} outline - 故事大纲（包含案件真相）
    * @returns {Promise<Object>} { puzzle, playerClues }
    */
-  async generatePuzzleAndClues(chapterContent, storyContext, players, options = {}) {
+  async generatePuzzleAndClues(chapterContent, storyContext, players, options = {}, outline = null) {
     if (!this.provider) {
       throw new Error('AI提供商未初始化');
     }
     await this.ensureProviderAvailability();
 
     const playerCount = players.length;
-    const playerNames = players.map(p => p.username).join('、');
+    const chapterNum = storyContext.currentChapter || 1;
+    
+    // ★ 从大纲获取本章的谜题信息 ★
+    let chapterGoal = null;
+    let correctAnswer = '';
+    let answerKeywords = [];
+    
+    if (outline?.chapterGoals) {
+      chapterGoal = outline.chapterGoals[chapterNum - 1];
+      if (chapterGoal) {
+        correctAnswer = chapterGoal.puzzleAnswer || '';
+        answerKeywords = chapterGoal.puzzleKeywords || [];
+      }
+    }
+    
+    // 如果大纲中有明确的答案，使用大纲
+    if (correctAnswer && answerKeywords.length > 0) {
+      console.log(`[谜题生成] 使用大纲中的谜题: ${chapterGoal.puzzleQuestion}`);
+      console.log(`[谜题生成] 正确答案: ${correctAnswer}`);
+      
+      const puzzle = {
+        question: chapterGoal.puzzleQuestion,
+        correct_answer: correctAnswer,
+        answer_keywords: answerKeywords.join('|'),
+        difficulty: chapterNum,
+        hints: [
+          chapterGoal.subTasks?.[0]?.task || '仔细调查案发现场',
+          `关键证据在${outline.keyEvidence?.[0]?.location || '某个地方'}`,
+          '整合所有玩家的线索'
+        ],
+        successMessage: `✅ 正确！${chapterGoal.successCondition || '你们找到了关键线索！'}`,
+        nextStep: chapterNum < 3 
+          ? `请继续调查，准备进入第${chapterNum + 1}章。`
+          : '现在可以指认凶手了！'
+      };
+      
+      // 基于大纲为玩家分配线索
+      const playerClues = this.distributeCluesFromOutline(players, outline, chapterNum);
+      
+      return { puzzle, playerClues };
+    }
 
-    const systemPrompt = `你是一个剧本杀游戏设计师。请根据章节内容设计：
-1. 一个核心谜题（所有玩家需要合作解决）
-2. 为每个玩家分配独特的线索（每人2-3条）
+    // 如果没有大纲，使用AI生成（但基于故事内容）
+    const systemPrompt = `你是一个剧本杀谜题设计师。根据章节内容设计一个**答案明确唯一**的谜题。
 
-## 设计原则：
-- 核心谜题必须需要多人信息整合才能解决
-- 每个玩家的线索都是解谜的一部分，但单独无法得出答案
-- 线索之间要有关联性，鼓励玩家互相交流
-- 有些线索可以是误导性的，增加推理难度
-- 谜题答案必须明确，能够验证对错
+## 核心原则：
+1. **问题必须基于章节内容**：问题中提到的人物、地点、物品必须在故事中出现过
+2. **答案必须唯一明确**：只有一个正确答案，不能有歧义
+3. **答案可验证**：通过关键词匹配可以判断对错
+4. **难度递进**：第1章问简单事实，第2章问关联推理，第3章问凶手身份
 
-## 线索类型：
-- 目击证词：玩家"看到"或"听到"的信息
-- 物证发现：玩家"发现"的物品或痕迹
-- 背景信息：玩家因角色背景而知道的信息
-- 人物关系：玩家与其他角色/NPC的特殊关系
+## 章节${chapterNum}的谜题类型：
+${chapterNum === 1 ? '- 问一个在故事中明确提到的事实（如：受害者在哪里被发现？用什么凶器？）' : ''}
+${chapterNum === 2 ? '- 问需要关联2-3条线索才能回答的问题（如：谁有作案时间？谁的证词有矛盾？）' : ''}
+${chapterNum === 3 ? '- 问凶手是谁及其动机（综合所有证据指认凶手）' : ''}
 
-## 当前玩家列表：
-${players.map((p, i) => `${i+1}. ${p.username}（ID: ${p.id}）`).join('\n')}
+## 当前玩家：${players.map(p => p.username).join('、')}
 
 ## 返回格式（严格JSON）：
 {
   "puzzle": {
-    "question": "核心谜题问题（让玩家思考和推理的问题）",
-    "correct_answer": "正确答案（简洁明确）",
-    "answer_keywords": "关键词1|关键词2|关键词3（用于判断答案是否正确）",
-    "difficulty": 3,
-    "hints": ["提示1", "提示2", "提示3"]
+    "question": "基于故事内容的具体问题（必须能在故事中找到答案）",
+    "correct_answer": "明确的唯一答案（如：书房、烛台、詹姆斯管家）",
+    "answer_keywords": ["关键词1", "关键词2"],
+    "difficulty": ${chapterNum},
+    "hints": ["提示1", "提示2"],
+    "successMessage": "答对后的鼓励语",
+    "nextStep": "下一步应该做什么"
   },
   "playerClues": {
-    "玩家ID": [
+    "${players[0]?.id || 'player1'}": [
       {
         "type": "目击证词",
-        "content": "线索内容（玩家独有的信息）",
-        "source": "线索来源（如：你在花园散步时...）",
-        "relevance": "与谜题的关联说明（内部使用，不告诉玩家）",
+        "content": "具体线索内容（从故事中提取）",
+        "source": "你是如何得知的",
+        "relevance": "与答案的关联",
         "canShare": true
       }
     ]
   }
 }`;
 
-    const userPrompt = `故事背景：${storyContext.title || '未命名'}
-${storyContext.background || ''}
+    const userPrompt = `故事标题：${storyContext.title || '未命名'}
+背景：${storyContext.background || '无'}
+当前章节：第${chapterNum}章
 
-当前章节内容：
-${chapterContent}
+章节内容：
+${chapterContent.substring(0, 2000)}
 
-请为这${playerCount}个玩家设计谜题和线索。确保：
-1. 每个玩家得到2-3条独特线索
-2. 线索内容不能重复
-3. 必须整合所有人的线索才能解开谜题
-4. 返回严格的JSON格式`;
+请基于以上内容设计谜题。
+要求：
+1. 问题必须能从章节内容中找到答案
+2. 答案只有一个，不能模糊
+3. 为${playerCount}个玩家各分配1-2条独特线索`;
 
     try {
       const response = await this.requestQueue.enqueue(
@@ -549,7 +1242,7 @@ ${chapterContent}
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ], {
-          temperature: 0.7,
+          temperature: 0.5, // 降低随机性，确保答案明确
           max_tokens: 1500
         }),
         {
@@ -558,17 +1251,20 @@ ${chapterContent}
         }
       );
 
-      // 解析AI返回的JSON
       let result = { puzzle: null, playerClues: {} };
       try {
         const content = response.content || response.text || '';
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           result = JSON.parse(jsonMatch[0]);
+          // 确保 answer_keywords 是字符串格式（用于后续匹配）
+          if (Array.isArray(result.puzzle?.answer_keywords)) {
+            result.puzzle.answer_keywords = result.puzzle.answer_keywords.join('|');
+          }
         }
       } catch (parseError) {
-        console.error('解析谜题和线索失败，使用默认生成:', parseError);
-        result = this.generateDefaultPuzzleAndClues(players, storyContext);
+        console.error('解析谜题失败，使用默认:', parseError);
+        result = this.generateDefaultPuzzleAndClues(players, storyContext, outline);
       }
 
       // 确保每个玩家都有线索
@@ -580,21 +1276,124 @@ ${chapterContent}
 
       return result;
     } catch (error) {
-      console.error('生成谜题和线索失败:', error);
-      return this.generateDefaultPuzzleAndClues(players, storyContext);
+      console.error('生成谜题失败:', error);
+      return this.generateDefaultPuzzleAndClues(players, storyContext, outline);
     }
+  }
+  
+  /**
+   * 基于大纲为玩家分配线索
+   */
+  distributeCluesFromOutline(players, outline, chapterNum) {
+    const playerClues = {};
+    if (!outline) return playerClues;
+    
+    const keyEvidence = outline.keyEvidence || [];
+    const locations = outline.locations || [];
+    const npcs = outline.npcs || [];
+    
+    players.forEach((player, index) => {
+      const clues = [];
+      
+      // 分配一条证据线索
+      if (keyEvidence[index % keyEvidence.length]) {
+        const evidence = keyEvidence[index % keyEvidence.length];
+        clues.push({
+          type: '物证发现',
+          content: `你在${evidence.location}发现了${evidence.name}：${evidence.description}`,
+          source: evidence.discoveryHint || '你仔细搜查时发现的',
+          relevance: `第${chapterNum}章关键证据`,
+          canShare: true
+        });
+      }
+      
+      // 分配一条NPC相关线索
+      if (npcs[index % npcs.length]) {
+        const npc = npcs[index % npcs.length];
+        clues.push({
+          type: '人物情报',
+          content: `${npc.name}（${npc.role}）：${npc.alibi || npc.secret}`,
+          source: '你对此人有所了解',
+          relevance: `嫌疑程度：${npc.suspicionLevel || 5}/10`,
+          canShare: true
+        });
+      }
+      
+      // 分配一条地点线索
+      if (locations[index % locations.length]) {
+        const loc = locations[index % locations.length];
+        clues.push({
+          type: '场景观察',
+          content: `${loc.name}里有这些可检查的东西：${loc.items?.join('、') || '需要仔细搜查'}`,
+          source: '你对这个地方比较熟悉',
+          relevance: '调查地点提示',
+          canShare: true
+        });
+      }
+      
+      playerClues[player.id] = clues;
+    });
+    
+    return playerClues;
   }
 
   /**
-   * 生成默认的谜题和线索（备用）
+   * 生成默认的谜题和线索（基于大纲）
    */
-  generateDefaultPuzzleAndClues(players, storyContext) {
+  generateDefaultPuzzleAndClues(players, storyContext, outline = null) {
+    // 如果有大纲，使用大纲信息生成更准确的默认谜题
+    if (outline) {
+      const chapterNum = storyContext.currentChapter || 1;
+      const chapterGoal = outline.chapterGoals?.[chapterNum - 1];
+      
+      let puzzle;
+      if (chapterNum === 1) {
+        puzzle = {
+          question: `受害者${outline.victimName}是在哪里被发现的？`,
+          correct_answer: outline.murderLocation || '书房',
+          answer_keywords: outline.murderLocation || '书房',
+          difficulty: 1,
+          hints: ['仔细阅读故事开头', '案发地点在故事中有明确描述'],
+          successMessage: `✅ 正确！${outline.victimName}确实是在${outline.murderLocation}被发现的。`,
+          nextStep: '现在去调查案发现场，寻找更多线索。'
+        };
+      } else if (chapterNum === 2) {
+        puzzle = {
+          question: `凶手使用了什么凶器或手法？`,
+          correct_answer: outline.murderMethod || '未知',
+          answer_keywords: outline.murderMethod?.split(/[，。、\s]+/).filter(w => w.length > 1).join('|') || '凶器',
+          difficulty: 2,
+          hints: ['检查案发现场的物品', '注意异常的痕迹'],
+          successMessage: `✅ 正确！作案手法是：${outline.murderMethod}`,
+          nextStep: '现在思考谁有这个作案条件和动机。'
+        };
+      } else {
+        puzzle = {
+          question: `谁是凶手？说出凶手的名字和作案动机。`,
+          correct_answer: `${outline.murdererName}，${outline.murdererMotive}`,
+          answer_keywords: `${outline.murdererName}|${outline.murdererMotive?.split(/[，。、\s]+/).filter(w => w.length > 1).slice(0, 3).join('|') || '动机'}`,
+          difficulty: 3,
+          hints: ['综合所有证据', '谁有动机、时间和条件？', '排除不在场证明成立的人'],
+          successMessage: `🎉 恭喜！你们成功破案！凶手是${outline.murdererName}！`,
+          nextStep: '真相大白！游戏结束。'
+        };
+      }
+      
+      // 使用大纲分配线索
+      const playerClues = this.distributeCluesFromOutline(players, outline, chapterNum);
+      
+      return { puzzle, playerClues };
+    }
+    
+    // 没有大纲时的通用默认谜题
     const puzzle = {
-      question: '凶手是谁？他/她的作案动机是什么？',
-      correct_answer: '需要根据线索推理',
-      answer_keywords: '凶手|动机|真相',
+      question: '凶手是谁？请说出凶手的名字。',
+      correct_answer: '詹姆斯管家',
+      answer_keywords: '詹姆斯|管家|James',
       difficulty: 3,
-      hints: ['注意时间线的矛盾', '有人在撒谎', '物证不会说谎']
+      hints: ['注意谁有作案时间', '谁的证词有矛盾', '物证指向谁'],
+      successMessage: '✅ 正确！你找到了凶手！',
+      nextStep: '案件告破，真相大白！'
     };
 
     const playerClues = {};
@@ -712,15 +1511,51 @@ ${chapterContent.substring(0, 1000)}
   }
 
   /**
-   * 验证玩家对谜题的回答
+   * 验证玩家对谜题的回答（增强版）
+   * 支持从大纲和谜题中获取正确答案
    * @param {string} playerAnswer - 玩家回答
    * @param {Object} puzzle - 谜题对象
+   * @param {Object} outline - 故事大纲（可选）
    * @returns {Object} { isCorrect, confidence, feedback }
    */
-  async validatePuzzleAnswer(playerAnswer, puzzle) {
-    const keywords = (puzzle.answer_keywords || '').split('|').map(k => k.trim().toLowerCase());
+  async validatePuzzleAnswer(playerAnswer, puzzle, outline = null) {
+    // 获取关键词（支持多种格式）
+    let keywords = [];
+    if (puzzle.answer_keywords) {
+      if (typeof puzzle.answer_keywords === 'string') {
+        keywords = puzzle.answer_keywords.split('|').map(k => k.trim().toLowerCase());
+      } else if (Array.isArray(puzzle.answer_keywords)) {
+        keywords = puzzle.answer_keywords.map(k => k.toLowerCase());
+      }
+    }
+    if (puzzle.puzzleKeywords) {
+      const parsedKeywords = typeof puzzle.puzzleKeywords === 'string' 
+        ? JSON.parse(puzzle.puzzleKeywords) 
+        : puzzle.puzzleKeywords;
+      keywords = [...keywords, ...parsedKeywords.map(k => k.toLowerCase())];
+    }
+    
+    // ★ 如果有大纲，补充凶手和证据关键词 ★
+    if (outline) {
+      if (outline.murdererName) {
+        keywords.push(outline.murdererName.toLowerCase());
+      }
+      if (outline.murderMethod) {
+        // 提取作案手法中的关键词
+        const methodKeywords = outline.murderMethod.match(/[\u4e00-\u9fa5]+/g) || [];
+        keywords.push(...methodKeywords.filter(k => k.length >= 2).map(k => k.toLowerCase()));
+      }
+      if (outline.culprit_id) {
+        keywords.push(outline.culprit_id.toLowerCase());
+      }
+    }
+    
+    // 去重关键词
+    keywords = [...new Set(keywords)].filter(k => k.length > 0);
+    
     const answerLower = playerAnswer.toLowerCase();
-    const correctAnswerLower = (puzzle.correct_answer || '').toLowerCase();
+    const correctAnswer = puzzle.correct_answer || puzzle.puzzleAnswer || '';
+    const correctAnswerLower = correctAnswer.toLowerCase();
     
     // 检查关键词匹配
     const matchedKeywords = keywords.filter(k => answerLower.includes(k));
@@ -730,27 +1565,56 @@ ${chapterContent.substring(0, 1000)}
     const correctAnswerParts = correctAnswerLower.split(/[，。、\s]+/).filter(p => p.length > 1);
     const answerMatch = correctAnswerParts.filter(p => answerLower.includes(p)).length / Math.max(correctAnswerParts.length, 1);
     
-    const confidence = (keywordMatch * 0.6 + answerMatch * 0.4);
-    const isCorrect = confidence >= 0.5; // 50%匹配度视为正确
-
-    let feedback = '';
-    if (isCorrect) {
-      if (confidence >= 0.8) {
-        feedback = '🎉 完全正确！你成功解开了这个谜题！';
-      } else {
-        feedback = '✅ 基本正确！你的推理方向是对的！';
-      }
-    } else if (confidence >= 0.3) {
-      feedback = '🤔 接近了，但还差一点...再想想？';
-    } else {
-      feedback = '❌ 这个答案似乎偏离了方向，需要更多线索吗？';
+    // ★ 特殊判定：如果玩家明确指出了凶手名字 ★
+    let isMurdererMentioned = false;
+    if (outline?.murdererName) {
+      isMurdererMentioned = answerLower.includes(outline.murdererName.toLowerCase());
     }
+    
+    // 综合评分
+    let confidence = (keywordMatch * 0.5 + answerMatch * 0.3 + (isMurdererMentioned ? 0.2 : 0));
+    const isCorrect = confidence >= 0.4 || isMurdererMentioned; // 说对凶手即为部分正确
+
+    // ★ 使用谜题中预设的成功消息和下一步指示 ★
+    const successMessage = puzzle.success_message || puzzle.successMessage || '✅ 正确！';
+    const nextStep = puzzle.next_step || puzzle.nextStep || '继续调查...';
+    
+    let feedback = '';
+    let nextAction = '';
+    
+    if (isCorrect) {
+      if (confidence >= 0.7) {
+        feedback = `🎉 **完全正确！**\n\n${successMessage}`;
+        nextAction = `\n\n📍 **下一步：** ${nextStep}`;
+      } else if (isMurdererMentioned) {
+        feedback = `✅ **答对了凶手！** 你找到了关键人物！\n\n再想想动机和手法来完善你的推理。`;
+        nextAction = `\n\n💡 **提示：** 尝试描述凶手的作案动机和方法。`;
+      } else {
+        feedback = `✅ **基本正确！**\n\n${successMessage}`;
+        nextAction = `\n\n📍 **下一步：** ${nextStep}`;
+      }
+      feedback += nextAction;
+    } else if (confidence >= 0.2) {
+      feedback = `🤔 **接近了**，但还差一些关键信息...\n\n正确答案应该包含：${keywords.slice(0, 2).join('、')}等关键信息。`;
+    } else {
+      feedback = `❌ 这个答案似乎偏离了方向。\n\n💡 **提示：** 试着重新审视案发现场和已收集的证据，与其他玩家交流线索。`;
+    }
+
+    console.log(`[答案验证] 玩家答案: "${playerAnswer.substring(0, 50)}..."
+  - 关键词匹配: ${matchedKeywords.join(', ')} (${Math.round(keywordMatch * 100)}%)
+  - 答案匹配: ${Math.round(answerMatch * 100)}%
+  - 提到凶手: ${isMurdererMentioned}
+  - 综合得分: ${Math.round(confidence * 100)}%
+  - 结果: ${isCorrect ? '正确' : '错误'}`);
 
     return {
       isCorrect,
       confidence,
       matchedKeywords,
-      feedback
+      feedback,
+      isMurdererMentioned,
+      nextStep: isCorrect ? nextStep : null,
+      successMessage: isCorrect ? successMessage : null
     };
   }
 
@@ -770,74 +1634,182 @@ ${chapterContent.substring(0, 1000)}
     await this.ensureProviderAvailability();
 
     const startTime = Date.now();
-    const { clues = [], puzzleProgress = null, revealedClues = [], puzzle = null } = playerState;
+    const { 
+      clues = [], 
+      puzzleProgress = null, 
+      revealedClues = [], 
+      puzzle = null,
+      outline = null,  // ★ 新增：故事大纲
+      tasks = [],      // ★ 新增：玩家任务
+      chapterObjective = null  // ★ 新增：章节目标
+    } = playerState;
 
     // 分析玩家输入意图
     const intent = this.analyzePlayerIntent(playerInput);
+    
+    // ★ 检查玩家是否在尝试调查特定地点或物品 ★
+    const investigationTarget = this.detectInvestigationTarget(playerInput, outline);
 
     // 选择要揭示的下一条线索
     const nextClue = clues.find(c => !revealedClues.includes(c.id));
 
+    // ★ 构建可交互地点和物品信息 ★
+    let locationsInfo = '';
+    let itemsInfo = '';
+    let investigationResult = null;
+    
+    if (outline) {
+      // 构建地点列表
+      if (outline.locations) {
+        locationsInfo = outline.locations.map(loc => 
+          `- ${loc.name}：${loc.description}${loc.items?.length ? `（可检查：${loc.items.join('、')}）` : ''}`
+        ).join('\n');
+      }
+      
+      // 构建可交互物品列表
+      if (outline.interactableItems) {
+        itemsInfo = outline.interactableItems.map(item => 
+          `- ${item.name}（${item.location}）：检查后可发现 → ${item.hiddenInfo}`
+        ).join('\n');
+      }
+      
+      // ★ 如果玩家在调查特定目标，匹配结果 ★
+      if (investigationTarget.found) {
+        if (investigationTarget.type === 'location') {
+          const location = outline.locations?.find(l => 
+            l.name.includes(investigationTarget.target) || investigationTarget.target.includes(l.name)
+          );
+          if (location) {
+            investigationResult = {
+              type: 'location',
+              name: location.name,
+              description: location.description,
+              items: location.items,
+              cluesHere: location.cluesHere
+            };
+          }
+        } else if (investigationTarget.type === 'item') {
+          const item = outline.interactableItems?.find(i => 
+            i.name.includes(investigationTarget.target) || investigationTarget.target.includes(i.name)
+          );
+          if (item) {
+            investigationResult = {
+              type: 'item',
+              name: item.name,
+              location: item.location,
+              hiddenInfo: item.hiddenInfo
+            };
+          }
+        }
+      }
+    }
+
     let systemPrompt = `你是剧本杀游戏的"故事机"，一个神秘的知情者。
 
 ## 你的角色：
-- 你知道所有真相，但不会直接说出
-- 你通过引导和暗示帮助玩家思考
-- 你根据玩家的进度逐步透露线索
-- 你保持神秘感，用隐晦的语言交流
+- 你知道所有真相，但不会直接说出凶手
+- 你通过引导和暗示帮助玩家调查
+- 当玩家调查正确的地点/物品时，给予有价值的发现
+- 当玩家问去哪里调查时，给出明确的地点建议
 
 ## 当前案件：
 - 案件名称：${context.title || '未命名案件'}
 - 案件背景：${context.background || '无'}
+${outline ? `- 案件类型：${outline.caseType}
+- 受害者：${outline.victimName}
+- 案发地点：${outline.murderLocation}
+- 案发时间：${outline.murderTime}` : ''}
+
+## 玩家可调查的地点：
+${locationsInfo}
+
+## 可检查的物品和发现：
+${itemsInfo || '暂无物品信息'}
+
+## 关键证据位置（隐藏信息，不直接告知玩家）：
+${outline?.keyEvidence?.map(e => `- ${e.name} 在 ${e.location}：${e.description}`).join('\n') || '暂无'}
 
 ## 这个玩家的状态：
 - 已获得线索数：${revealedClues.length}/${clues.length}
-- 解谜尝试次数：${puzzleProgress?.attempts || 0}
-${puzzle ? `- 当前谜题：${puzzle.question}` : ''}
+${puzzle ? `- 当前谜题：${puzzle.puzzle_question || puzzle.question}` : ''}
+${chapterObjective ? `- 本章目标：${chapterObjective.description}` : ''}
 
 ## 玩家的意图分析：
 ${intent.type === 'ask_clue' ? '玩家想获取线索' : ''}
 ${intent.type === 'answer_puzzle' ? '玩家在尝试解谜' : ''}
 ${intent.type === 'ask_help' ? '玩家请求帮助' : ''}
+${intent.type === 'investigate' ? `玩家正在调查：${investigationTarget.target}` : ''}
 ${intent.type === 'chat' ? '玩家在闲聊或探索' : ''}
 
 `;
 
-    // 根据意图添加具体指导
-    if (intent.type === 'ask_clue' && nextClue) {
-      systemPrompt += `
+    // ★ 如果玩家在调查，给出发现 ★
+    if (investigationResult) {
+      if (investigationResult.type === 'location') {
+        systemPrompt += `
+## 🔍 玩家正在调查地点：${investigationResult.name}
+描述这个地点的场景，然后告诉玩家这里有什么可以检查的：
+- 可检查物品：${investigationResult.items?.join('、') || '暂无'}
+- 这里可能发现的线索：${investigationResult.cluesHere?.join('、') || '需要仔细搜查'}
+
+请生动描述场景，并明确告诉玩家可以检查什么。`;
+      } else if (investigationResult.type === 'item') {
+        systemPrompt += `
+## 🔍 玩家正在检查物品：${investigationResult.name}
+地点：${investigationResult.location}
+玩家检查后发现：${investigationResult.hiddenInfo}
+
+请用戏剧性的方式描述这个发现，让玩家感到有所收获！`;
+      }
+    } else if (intent.type === 'ask_clue' || intent.type === 'ask_help') {
+      // 根据意图添加具体指导
+      if (nextClue) {
+        systemPrompt += `
 ## 你要透露的线索：
 - 类型：${nextClue.type}
 - 内容：${nextClue.content}
 - 来源：${nextClue.source}
 
-请用神秘的方式透露这条线索，不要直接说出，而是通过暗示让玩家意识到。
-比如：
-- "你有没有注意到...？"
-- "也许你应该回想一下..."
-- "有趣...在那个地方..."`;
+请用谜语或暗示的方式透露这条线索，不要直接说出。`;
+      } else if (outline?.locations) {
+        // ★ 关键改进：告诉玩家去哪里调查 ★
+        const suggestedLocation = outline.locations.find(l => l.cluesHere?.length > 0) || outline.locations[0];
+        const unvisitedEvidence = outline.keyEvidence?.find(e => !revealedClues.some(c => c.content?.includes(e.name)));
+        
+        systemPrompt += `
+## 引导玩家调查：
+建议玩家去的地点：${suggestedLocation?.name || '案发现场'}
+原因：${suggestedLocation?.description || '可能有线索'}
+${unvisitedEvidence ? `暗示：${unvisitedEvidence.discoveryHint}` : ''}
+
+请用神秘但明确的方式告诉玩家应该去哪里调查，例如：
+"也许你应该去${suggestedLocation?.name}看看...那里似乎隐藏着某些东西..."`;
+      } else {
+        systemPrompt += `
+## 注意：暂无具体线索可揭示
+请引导玩家：
+1. 建议调查案发现场（书房/客厅等）
+2. 提示可以检查物品（书桌、抽屉、壁炉等）
+3. 鼓励与其他玩家交流`;
+      }
     } else if (intent.type === 'answer_puzzle' && puzzle) {
       systemPrompt += `
 ## 谜题验证：
-玩家的回答需要和正确答案对比：${puzzle.correct_answer}
+正确答案：${puzzle.correct_answer || puzzle.puzzleAnswer}
+关键词：${puzzle.answer_keywords || puzzle.puzzleKeywords || []}
 
-如果答案接近正确，给予肯定并引导完善。
-如果答案偏离，用提示引导而不是直接否定。`;
-    } else if (intent.type === 'ask_help') {
-      const hintIndex = Math.min(puzzleProgress?.hintsUsed || 0, (puzzle?.hints?.length || 1) - 1);
-      const hint = puzzle?.hints?.[hintIndex] || '仔细观察，真相就在细节中...';
-      systemPrompt += `
-## 给予提示：
-可以透露的提示：${hint}
-
-用委婉的方式给出提示，保持神秘感。`;
+判断规则：
+1. 如果玩家说对了凶手名字和大致动机，判定正确
+2. 如果只对了一部分，给予鼓励并提示差什么
+3. 如果完全错误，引导重新思考`;
     }
 
     systemPrompt += `
 
 ## 回应风格：
 - 神秘而富有暗示性
-- 回复控制在80-150字
+- 回复控制在100-200字
+- 如果玩家问去哪里调查，一定要给出具体地点名称
 - 结尾可以抛出问题引导思考
 - 使用 "..." 增加神秘感`;
 
@@ -852,7 +1824,7 @@ ${intent.type === 'chat' ? '玩家在闲聊或探索' : ''}
           { role: 'user', content: userPrompt }
         ], {
           temperature: 0.7,
-          max_tokens: 300
+          max_tokens: 400
         }),
         {
           priority: 1,
@@ -867,12 +1839,57 @@ ${intent.type === 'chat' ? '玩家在闲聊或探索' : ''}
       result.intent = intent;
       result.revealedClue = intent.type === 'ask_clue' ? nextClue : null;
       result.shouldRevealClue = intent.type === 'ask_clue' && nextClue;
+      result.investigationResult = investigationResult; // ★ 新增：调查结果
 
       return result;
     } catch (error) {
       const duration = Date.now() - startTime;
       throw this.standardizeError(error, duration);
     }
+  }
+  
+  /**
+   * 检测玩家是否在尝试调查特定地点或物品
+   */
+  detectInvestigationTarget(input, outline) {
+    if (!outline) {
+      return { found: false };
+    }
+    
+    const lowerInput = input.toLowerCase();
+    
+    // 调查地点的关键词
+    const locationKeywords = ['去', '到', '调查', '搜查', '前往', '进入', '查看'];
+    // 检查物品的关键词
+    const itemKeywords = ['检查', '查看', '翻找', '打开', '仔细看', '观察', '搜索'];
+    
+    // 检查是否在调查地点
+    if (locationKeywords.some(k => lowerInput.includes(k))) {
+      for (const loc of (outline.locations || [])) {
+        if (lowerInput.includes(loc.name.toLowerCase()) || lowerInput.includes(loc.name)) {
+          return { found: true, type: 'location', target: loc.name };
+        }
+      }
+    }
+    
+    // 检查是否在检查物品
+    if (itemKeywords.some(k => lowerInput.includes(k))) {
+      for (const item of (outline.interactableItems || [])) {
+        if (lowerInput.includes(item.name.toLowerCase()) || lowerInput.includes(item.name)) {
+          return { found: true, type: 'item', target: item.name };
+        }
+      }
+      // 也检查地点中的物品
+      for (const loc of (outline.locations || [])) {
+        for (const item of (loc.items || [])) {
+          if (lowerInput.includes(item.toLowerCase()) || lowerInput.includes(item)) {
+            return { found: true, type: 'item', target: item };
+          }
+        }
+      }
+    }
+    
+    return { found: false };
   }
 
   /**
@@ -881,18 +1898,24 @@ ${intent.type === 'chat' ? '玩家在闲聊或探索' : ''}
   analyzePlayerIntent(input) {
     const lowerInput = input.toLowerCase();
     
+    // 调查地点/物品的关键词（优先级最高）
+    const investigateKeywords = ['去', '到', '调查', '搜查', '前往', '进入', '检查', '查看', '翻找', '打开', '仔细看', '观察', '搜索'];
     // 询问线索的关键词
-    const clueKeywords = ['线索', '证据', '发现', '看到', '听到', '告诉我', '有什么', '知道什么', '信息'];
+    const clueKeywords = ['线索', '证据', '发现', '看到', '听到', '告诉我', '有什么', '知道什么', '信息', '去哪', '哪里找'];
     // 尝试解谜的关键词
-    const puzzleKeywords = ['凶手是', '答案是', '我认为', '我猜', '真相是', '是因为', '动机是'];
+    const puzzleKeywords = ['凶手是', '答案是', '我认为', '我猜', '真相是', '是因为', '动机是', '杀了', '杀害', '嫌疑人'];
     // 请求帮助的关键词
-    const helpKeywords = ['帮助', '提示', '不知道', '想不出', '没头绪', '给点提示', '怎么办'];
+    const helpKeywords = ['帮助', '提示', '不知道', '想不出', '没头绪', '给点提示', '怎么办', '下一步'];
 
-    if (clueKeywords.some(k => lowerInput.includes(k))) {
-      return { type: 'ask_clue', confidence: 0.8 };
+    // 优先检查是否在调查
+    if (investigateKeywords.some(k => lowerInput.includes(k))) {
+      return { type: 'investigate', confidence: 0.9 };
     }
     if (puzzleKeywords.some(k => lowerInput.includes(k))) {
       return { type: 'answer_puzzle', confidence: 0.8 };
+    }
+    if (clueKeywords.some(k => lowerInput.includes(k))) {
+      return { type: 'ask_clue', confidence: 0.8 };
     }
     if (helpKeywords.some(k => lowerInput.includes(k))) {
       return { type: 'ask_help', confidence: 0.8 };
@@ -1159,6 +2182,7 @@ ${intent.type === 'chat' ? '玩家在闲聊或探索' : ''}
 1. **角色标记**：所有NPC必须用 [NPC:名称] 格式标记，所有玩家用 [玩家:名称] 格式标记
 2. **玩家融入**：将所有玩家自然地写入剧情，给他们安排具体的行动、对话或发现
 3. **线索设计**：为每个登场角色设计可发现的线索卡片
+4. **案件必备**：第一章必须有明确的案件（凶杀/失踪/盗窃）和受害者
 
 ## 当前玩家列表：
 ${playerDescriptions}
@@ -1176,11 +2200,11 @@ ${existingCharacterInfo}
 
 ## 输出格式（严格JSON）：
 {
-  "chapterContent": "章节正文内容（300-500字，使用[NPC:名称]和[玩家:名称]标记）",
+  "chapterContent": "章节正文内容（300-500字，使用[NPC:名称]和[玩家:名称]标记。第一章必须包含：1.案件发生 2.受害者描述 3.嫌疑人出场）",
   "newCharacters": [
     {
       "name": "角色名",
-      "type": "npc",
+      "type": "npc 或 victim（受害者）或 suspect（嫌疑人）",
       "age": "年龄",
       "occupation": "职业",
       "personality": "性格特点",

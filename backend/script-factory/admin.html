@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>剧本工厂 - 管理后台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Noto Sans SC', sans-serif; }
+    .gradient-bg { background: linear-gradient(135deg, #1e3a5f 0%, #2d1b4e 100%); }
+    .card { backdrop-filter: blur(10px); background: rgba(255,255,255,0.1); }
+    .btn-primary { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); }
+    .btn-primary:hover { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); }
+    .sidebar { width: 260px; }
+    .main-content { margin-left: 260px; }
+    .status-draft { color: #fbbf24; }
+    .status-ready { color: #34d399; }
+    .status-published { color: #60a5fa; }
+    .modal { display: none; }
+    .modal.active { display: flex; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 12px; }
+    /* 终端样式 */
+    .terminal {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #c9d1d9;
+      overflow: hidden;
+    }
+    .terminal-header {
+      background: #161b22;
+      padding: 8px 12px;
+      border-bottom: 1px solid #30363d;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+    .terminal-dot.red { background: #ff5f56; }
+    .terminal-dot.yellow { background: #ffbd2e; }
+    .terminal-dot.green { background: #27c93f; }
+    .terminal-body {
+      padding: 12px;
+      height: 500px;
+      overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+    .terminal-line {
+      margin: 2px 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .terminal-line.info { color: #58a6ff; }
+    .terminal-line.success { color: #3fb950; }
+    .terminal-line.warning { color: #d29922; }
+    .terminal-line.error { color: #f85149; }
+    .terminal-line.ai { color: #a371f7; }
+    .terminal-line.step { color: #79c0ff; font-weight: bold; }
+    .terminal-line.timestamp { color: #8b949e; }
+    .terminal-cursor {
+      display: inline-block;
+      width: 8px;
+      height: 14px;
+      background: #c9d1d9;
+      animation: blink 1s infinite;
+    }
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+  </style>
+</head>
+<body class="gradient-bg min-h-screen text-white">
+  <!-- 侧边栏 -->
+  <aside class="sidebar fixed left-0 top-0 h-full bg-gray-900/50 border-r border-gray-700 p-4">
+    <div class="mb-8">
+      <h1 class="text-2xl font-bold text-purple-400">🎭 剧本工厂</h1>
+      <p class="text-sm text-gray-400 mt-1">Script Factory</p>
+    </div>
+    
+    <nav class="space-y-2">
+      <a href="#" onclick="showPage('dashboard')" class="nav-link flex items-center gap-3 p-3 rounded-lg hover:bg-gray-700/50 transition" data-page="dashboard">
+        <span>📊</span> 仪表盘
+      </a>
+      <a href="#" onclick="showPage('scripts')" class="nav-link flex items-center gap-3 p-3 rounded-lg hover:bg-gray-700/50 transition" data-page="scripts">
+        <span>📜</span> 剧本管理
+      </a>
+      <a href="#" onclick="showPage('generate')" class="nav-link flex items-center gap-3 p-3 rounded-lg hover:bg-gray-700/50 transition" data-page="generate">
+        <span>✨</span> 生成剧本
+      </a>
+      <a href="#" onclick="showPage('templates')" class="nav-link flex items-center gap-3 p-3 rounded-lg hover:bg-gray-700/50 transition" data-page="templates">
+        <span>📁</span> 主题模板
+      </a>
+    </nav>
+    
+    <div class="absolute bottom-4 left-4 right-4">
+      <div class="p-3 bg-gray-800/50 rounded-lg text-sm">
+        <p class="text-gray-400">API 端点</p>
+        <p class="text-gray-300 font-mono text-xs mt-1" id="apiEndpoint">http://localhost:3000</p>
+      </div>
+    </div>
+  </aside>
+  
+  <!-- 主内容区 -->
+  <main class="main-content p-8">
+    <!-- 仪表盘页面 -->
+    <div id="page-dashboard" class="page">
+      <h2 class="text-3xl font-bold mb-6">📊 仪表盘</h2>
+      
+      <!-- 统计卡片 -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="card rounded-xl p-6 border border-gray-700">
+          <div class="text-3xl mb-2" id="stat-total">0</div>
+          <div class="text-gray-400">总剧本数</div>
+        </div>
+        <div class="card rounded-xl p-6 border border-gray-700">
+          <div class="text-3xl mb-2 text-green-400" id="stat-published">0</div>
+          <div class="text-gray-400">已发布</div>
+        </div>
+        <div class="card rounded-xl p-6 border border-gray-700">
+          <div class="text-3xl mb-2 text-yellow-400" id="stat-draft">0</div>
+          <div class="text-gray-400">草稿</div>
+        </div>
+        <div class="card rounded-xl p-6 border border-gray-700">
+          <div class="text-3xl mb-2 text-blue-400" id="stat-plays">0</div>
+          <div class="text-gray-400">总游玩次数</div>
+        </div>
+      </div>
+      
+      <!-- 快速操作 -->
+      <div class="card rounded-xl p-6 border border-gray-700 mb-8">
+        <h3 class="text-xl font-bold mb-4">🚀 快速操作</h3>
+        <div class="flex gap-4">
+          <button onclick="showPage('generate')" class="btn-primary px-6 py-3 rounded-lg font-bold transition transform hover:scale-105">
+            ✨ 生成新剧本
+          </button>
+          <button onclick="loadScripts()" class="px-6 py-3 rounded-lg font-bold bg-gray-700 hover:bg-gray-600 transition">
+            🔄 刷新数据
+          </button>
+        </div>
+      </div>
+      
+      <!-- 最近剧本 -->
+      <div class="card rounded-xl p-6 border border-gray-700">
+        <h3 class="text-xl font-bold mb-4">📜 最近剧本</h3>
+        <div id="recent-scripts" class="space-y-3">
+          <p class="text-gray-400">加载中...</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 剧本管理页面 -->
+    <div id="page-scripts" class="page hidden">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-3xl font-bold">📜 剧本管理</h2>
+        <div class="flex gap-4">
+          <select id="filter-status" onchange="loadScripts()" class="bg-gray-800 border border-gray-600 rounded-lg px-4 py-2">
+            <option value="">全部状态</option>
+            <option value="draft">草稿</option>
+            <option value="ready">待发布</option>
+            <option value="published">已发布</option>
+          </select>
+          <select id="filter-theme" onchange="loadScripts()" class="bg-gray-800 border border-gray-600 rounded-lg px-4 py-2">
+            <option value="">全部主题</option>
+          </select>
+        </div>
+      </div>
+      
+      <div id="scripts-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <p class="text-gray-400">加载中...</p>
+      </div>
+    </div>
+    
+    <!-- 生成剧本页面 -->
+    <div id="page-generate" class="page hidden">
+      <h2 class="text-3xl font-bold mb-6">✨ 生成新剧本</h2>
+      
+      <div class="flex gap-6">
+        <!-- 左侧：生成表单 -->
+        <div class="card rounded-xl p-8 border border-gray-700 flex-1">
+          <form id="generate-form" onsubmit="generateScript(event)">
+            <!-- 主题选择 -->
+            <div class="mb-6">
+              <label class="block text-lg font-bold mb-3">🎭 选择主题</label>
+              <div id="theme-options" class="grid grid-cols-2 gap-4">
+                <!-- 动态生成主题选项 -->
+              </div>
+            </div>
+            
+            <!-- 玩家人数 -->
+            <div class="mb-6">
+              <label class="block text-lg font-bold mb-3">👥 玩家人数</label>
+              <div class="flex gap-4">
+                <input type="range" id="player-count" min="3" max="8" value="4" 
+                       class="flex-1" oninput="updatePlayerCount(this.value)">
+                <span id="player-count-display" class="text-xl font-bold w-12 text-center">4人</span>
+              </div>
+            </div>
+            
+            <!-- 难度选择 -->
+            <div class="mb-6">
+              <label class="block text-lg font-bold mb-3">⭐ 难度等级</label>
+              <div class="flex gap-2">
+                <button type="button" onclick="selectDifficulty(1)" class="difficulty-btn px-4 py-2 rounded-lg bg-gray-700">简单</button>
+                <button type="button" onclick="selectDifficulty(2)" class="difficulty-btn px-4 py-2 rounded-lg bg-gray-700">较易</button>
+                <button type="button" onclick="selectDifficulty(3)" class="difficulty-btn px-4 py-2 rounded-lg bg-purple-600">中等</button>
+                <button type="button" onclick="selectDifficulty(4)" class="difficulty-btn px-4 py-2 rounded-lg bg-gray-700">较难</button>
+                <button type="button" onclick="selectDifficulty(5)" class="difficulty-btn px-4 py-2 rounded-lg bg-gray-700">困难</button>
+              </div>
+              <input type="hidden" id="difficulty" value="3">
+            </div>
+            
+            <!-- 自定义标题 -->
+            <div class="mb-6">
+              <label class="block text-lg font-bold mb-3">📝 剧本标题（可选）</label>
+              <input type="text" id="custom-title" placeholder="留空则自动生成" 
+                     class="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-3">
+            </div>
+            
+            <!-- 自定义背景 -->
+            <div class="mb-8">
+              <label class="block text-lg font-bold mb-3">📖 自定义背景（可选）</label>
+              <textarea id="custom-background" rows="3" placeholder="输入自定义故事背景，AI将据此生成剧本..."
+                        class="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-3"></textarea>
+            </div>
+            
+            <!-- 生成按钮 -->
+            <button type="submit" id="generate-btn" class="w-full btn-primary py-4 rounded-lg text-xl font-bold transition transform hover:scale-105">
+              🎲 开始生成剧本
+            </button>
+          </form>
+          
+          <!-- 生成进度条 -->
+          <div id="generate-progress" class="hidden mt-6">
+            <div class="flex items-center gap-4 mb-3">
+              <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-purple-500"></div>
+              <span id="progress-text" class="text-purple-300">正在生成剧本...</span>
+            </div>
+            <div class="w-full bg-gray-700 rounded-full h-2">
+              <div id="progress-bar" class="bg-purple-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+            </div>
+            <div class="text-sm text-gray-400 mt-2" id="progress-step">准备中...</div>
+          </div>
+        </div>
+        
+        <!-- 右侧：实时终端 -->
+        <div class="terminal flex-1 min-w-[450px]">
+          <div class="terminal-header">
+            <div class="terminal-dot red"></div>
+            <div class="terminal-dot yellow"></div>
+            <div class="terminal-dot green"></div>
+            <span class="text-gray-400 text-sm ml-2">🖥️ 生成日志 - Terminal</span>
+            <div class="ml-auto flex gap-2">
+              <button onclick="copyTerminalContent()" class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800">
+                📋 复制
+              </button>
+              <button onclick="clearTerminal()" class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded bg-gray-800">
+                🗑️ 清空
+              </button>
+            </div>
+          </div>
+          <div class="terminal-body" id="terminal-output">
+            <div class="terminal-line timestamp">[系统] 终端已就绪，等待生成任务...</div>
+            <div class="terminal-line info">💡 点击"开始生成剧本"后，这里将实时显示生成进度和AI返回内容</div>
+            <div class="terminal-line"></div>
+            <div class="terminal-line">
+              <span class="terminal-cursor"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 主题模板页面 -->
+    <div id="page-templates" class="page hidden">
+      <h2 class="text-3xl font-bold mb-6">📁 主题模板</h2>
+      
+      <div id="templates-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- 动态生成 -->
+      </div>
+    </div>
+  </main>
+  
+  <!-- 剧本详情模态框 -->
+  <div id="script-modal" class="modal fixed inset-0 bg-black/70 items-center justify-center z-50">
+    <div class="bg-gray-900 rounded-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+      <div class="p-6 border-b border-gray-700 flex justify-between items-center sticky top-0 bg-gray-900">
+        <h3 id="modal-title" class="text-2xl font-bold">剧本详情</h3>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+      </div>
+      <div id="modal-content" class="p-6">
+        <!-- 动态内容 -->
+      </div>
+      <div class="p-6 border-t border-gray-700 flex gap-4">
+        <button onclick="publishScript()" id="btn-publish" class="btn-primary px-6 py-3 rounded-lg font-bold">
+          🚀 发布剧本
+        </button>
+        <button onclick="exportScript()" class="px-6 py-3 rounded-lg font-bold bg-gray-700 hover:bg-gray-600">
+          📥 导出JSON
+        </button>
+        <button onclick="deleteScript()" class="px-6 py-3 rounded-lg font-bold bg-red-600 hover:bg-red-500">
+          🗑️ 删除
+        </button>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    // 配置
+    const API_BASE = 'http://localhost:3000/api/scripts';
+    let currentScriptId = null;
+    let themes = [];
+    let eventSource = null;
+    
+    // ==================== 终端日志功能 ====================
+    
+    function getTimestamp() {
+      const now = new Date();
+      return now.toTimeString().split(' ')[0];
+    }
+    
+    function terminalLog(message, type = 'info') {
+      const terminal = document.getElementById('terminal-output');
+      const line = document.createElement('div');
+      line.className = `terminal-line ${type}`;
+      
+      const timestamp = `[${getTimestamp()}]`;
+      line.innerHTML = `<span class="timestamp">${timestamp}</span> ${escapeHtml(message)}`;
+      
+      terminal.appendChild(line);
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+    
+    function terminalLogAI(content) {
+      const terminal = document.getElementById('terminal-output');
+      const line = document.createElement('div');
+      line.className = 'terminal-line ai';
+      line.innerHTML = `<span class="timestamp">[${getTimestamp()}]</span> 🤖 AI: ${escapeHtml(content.substring(0, 200))}${content.length > 200 ? '...' : ''}`;
+      terminal.appendChild(line);
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+    
+    function terminalLogStep(step, description) {
+      const terminal = document.getElementById('terminal-output');
+      
+      // 添加分隔线
+      const separator = document.createElement('div');
+      separator.className = 'terminal-line';
+      separator.innerHTML = '─'.repeat(50);
+      terminal.appendChild(separator);
+      
+      // 添加步骤信息
+      const line = document.createElement('div');
+      line.className = 'terminal-line step';
+      line.innerHTML = `<span class="timestamp">[${getTimestamp()}]</span> 📍 Step ${step}: ${escapeHtml(description)}`;
+      terminal.appendChild(line);
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+    
+    function clearTerminal() {
+      const terminal = document.getElementById('terminal-output');
+      terminal.innerHTML = `
+        <div class="terminal-line timestamp">[${getTimestamp()}] 终端已清空</div>
+        <div class="terminal-line info">💡 等待新的生成任务...</div>
+        <div class="terminal-line"></div>
+        <div class="terminal-line"><span class="terminal-cursor"></span></div>
+      `;
+    }
+    
+    function copyTerminalContent() {
+      const terminal = document.getElementById('terminal-output');
+      const text = terminal.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        terminalLog('📋 日志已复制到剪贴板', 'success');
+      }).catch(err => {
+        terminalLog('复制失败: ' + err.message, 'error');
+      });
+    }
+    
+    function updateProgressBar(step) {
+      const progressBar = document.getElementById('progress-bar');
+      const progressStep = document.getElementById('progress-step');
+      const percentage = (step / 10) * 100;
+      if (progressBar) {
+        progressBar.style.width = percentage + '%';
+      }
+      if (progressStep) {
+        progressStep.textContent = `步骤 ${step}/10`;
+      }
+    }
+    
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    
+    // 初始化
+    document.addEventListener('DOMContentLoaded', async () => {
+      await loadThemes();
+      await loadStats();
+      await loadScripts();
+      showPage('dashboard');
+    });
+    
+    // 页面切换
+    function showPage(pageName) {
+      document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+      document.getElementById(`page-${pageName}`).classList.remove('hidden');
+      
+      document.querySelectorAll('.nav-link').forEach(link => {
+        link.classList.remove('bg-purple-600/50');
+        if (link.dataset.page === pageName) {
+          link.classList.add('bg-purple-600/50');
+        }
+      });
+    }
+    
+    // 加载主题
+    async function loadThemes() {
+      try {
+        const res = await fetch(`${API_BASE}/themes`);
+        const data = await res.json();
+        themes = data.themes || [];
+        
+        // 渲染主题选项
+        const themeOptions = document.getElementById('theme-options');
+        const filterTheme = document.getElementById('filter-theme');
+        
+        themeOptions.innerHTML = themes.map((t, i) => `
+          <label class="theme-option cursor-pointer">
+            <input type="radio" name="theme" value="${t.id}" ${i === 0 ? 'checked' : ''} class="hidden">
+            <div class="p-4 rounded-lg border-2 border-gray-600 hover:border-purple-500 transition theme-card">
+              <div class="text-lg font-bold">${t.name}</div>
+              <div class="text-sm text-gray-400 mt-1">${t.description}</div>
+            </div>
+          </label>
+        `).join('');
+        
+        // 添加样式切换
+        document.querySelectorAll('.theme-option input').forEach(input => {
+          input.addEventListener('change', () => {
+            document.querySelectorAll('.theme-card').forEach(card => card.classList.remove('border-purple-500'));
+            input.parentElement.querySelector('.theme-card').classList.add('border-purple-500');
+          });
+          if (input.checked) {
+            input.parentElement.querySelector('.theme-card').classList.add('border-purple-500');
+          }
+        });
+        
+        filterTheme.innerHTML = '<option value="">全部主题</option>' + 
+          themes.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+        
+        // 渲染模板页面
+        renderTemplates();
+      } catch (error) {
+        console.error('加载主题失败:', error);
+      }
+    }
+    
+    // 渲染模板列表
+    function renderTemplates() {
+      const container = document.getElementById('templates-list');
+      container.innerHTML = themes.map(t => `
+        <div class="card rounded-xl p-6 border border-gray-700">
+          <h3 class="text-xl font-bold mb-2">${t.name}</h3>
+          <p class="text-gray-400 mb-4">${t.description}</p>
+          <p class="text-sm text-purple-400">${t.atmosphere}</p>
+          <button onclick="quickGenerate('${t.id}')" class="mt-4 w-full btn-primary py-2 rounded-lg font-bold">
+            使用此主题生成
+          </button>
+        </div>
+      `).join('');
+    }
+    
+    // 加载统计数据
+    async function loadStats() {
+      try {
+        const res = await fetch(`${API_BASE}/stats/overview`);
+        const data = await res.json();
+        
+        if (data.success) {
+          document.getElementById('stat-total').textContent = data.stats.totalScripts;
+          document.getElementById('stat-published').textContent = data.stats.publishedScripts;
+          document.getElementById('stat-draft').textContent = data.stats.draftScripts;
+          document.getElementById('stat-plays').textContent = data.stats.totalPlayCount;
+        }
+      } catch (error) {
+        console.error('加载统计失败:', error);
+      }
+    }
+    
+    // 加载剧本列表
+    async function loadScripts() {
+      try {
+        const status = document.getElementById('filter-status')?.value || '';
+        const theme = document.getElementById('filter-theme')?.value || '';
+        
+        let url = `${API_BASE}?`;
+        if (status) url += `status=${status}&`;
+        if (theme) url += `theme=${theme}&`;
+        
+        const res = await fetch(url);
+        const data = await res.json();
+        
+        if (data.success) {
+          renderScripts(data.scripts);
+          renderRecentScripts(data.scripts.slice(0, 5));
+        }
+      } catch (error) {
+        console.error('加载剧本失败:', error);
+        document.getElementById('scripts-list').innerHTML = '<p class="text-red-400">加载失败，请检查API连接</p>';
+      }
+    }
+    
+    // 渲染剧本列表
+    function renderScripts(scripts) {
+      const container = document.getElementById('scripts-list');
+      
+      if (scripts.length === 0) {
+        container.innerHTML = '<p class="text-gray-400">暂无剧本，点击"生成剧本"创建第一个！</p>';
+        return;
+      }
+      
+      container.innerHTML = scripts.map(s => `
+        <div class="card rounded-xl p-6 border border-gray-700 cursor-pointer hover:border-purple-500 transition" 
+             onclick="viewScript('${s.id}')">
+          <div class="flex justify-between items-start mb-3">
+            <h3 class="text-xl font-bold">${s.title}</h3>
+            <span class="status-${s.status} text-sm">${getStatusText(s.status)}</span>
+          </div>
+          <p class="text-gray-400 text-sm mb-3">${s.description || '暂无描述'}</p>
+          <div class="flex gap-2 flex-wrap mb-3">
+            <span class="tag bg-purple-600/50">${getThemeName(s.theme)}</span>
+            <span class="tag bg-blue-600/50">${s.min_players}-${s.max_players}人</span>
+            <span class="tag bg-yellow-600/50">难度${s.difficulty}</span>
+          </div>
+          <div class="text-xs text-gray-500">
+            创建于 ${new Date(s.created_at).toLocaleDateString()}
+            ${s.play_count > 0 ? ` · ${s.play_count}次游玩` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+    
+    // 渲染最近剧本
+    function renderRecentScripts(scripts) {
+      const container = document.getElementById('recent-scripts');
+      
+      if (scripts.length === 0) {
+        container.innerHTML = '<p class="text-gray-400">暂无剧本</p>';
+        return;
+      }
+      
+      container.innerHTML = scripts.map(s => `
+        <div class="flex justify-between items-center p-3 rounded-lg hover:bg-gray-700/50 cursor-pointer" 
+             onclick="viewScript('${s.id}')">
+          <div>
+            <div class="font-bold">${s.title}</div>
+            <div class="text-sm text-gray-400">${getThemeName(s.theme)} · ${s.min_players}-${s.max_players}人</div>
+          </div>
+          <span class="status-${s.status} text-sm">${getStatusText(s.status)}</span>
+        </div>
+      `).join('');
+    }
+    
+    // 获取状态文本
+    function getStatusText(status) {
+      const map = { draft: '草稿', ready: '待发布', published: '已发布' };
+      return map[status] || status;
+    }
+    
+    // 获取主题名称
+    function getThemeName(themeId) {
+      const theme = themes.find(t => t.id === themeId);
+      return theme?.name || themeId;
+    }
+    
+    // 更新玩家人数显示
+    function updatePlayerCount(value) {
+      document.getElementById('player-count-display').textContent = value + '人';
+    }
+    
+    // 选择难度
+    function selectDifficulty(level) {
+      document.getElementById('difficulty').value = level;
+      document.querySelectorAll('.difficulty-btn').forEach((btn, i) => {
+        btn.classList.remove('bg-purple-600');
+        btn.classList.add('bg-gray-700');
+        if (i + 1 === level) {
+          btn.classList.remove('bg-gray-700');
+          btn.classList.add('bg-purple-600');
+        }
+      });
+    }
+    
+    // 生成剧本 (使用 SSE 流式传输)
+    async function generateScript(event) {
+      event.preventDefault();
+      
+      const theme = document.querySelector('input[name="theme"]:checked')?.value;
+      const playerCount = parseInt(document.getElementById('player-count').value);
+      const difficulty = parseInt(document.getElementById('difficulty').value);
+      const title = document.getElementById('custom-title').value || null;
+      const customBackground = document.getElementById('custom-background').value || null;
+      
+      // 清空并初始化终端
+      const terminal = document.getElementById('terminal-output');
+      terminal.innerHTML = '';
+      terminalLog('🚀 开始生成剧本...', 'info');
+      terminalLog(`主题: ${getThemeName(theme)} | 玩家: ${playerCount}人 | 难度: ${difficulty}`, 'info');
+      terminalLog('', 'info');
+      
+      // 显示进度
+      document.getElementById('generate-btn').disabled = true;
+      document.getElementById('generate-progress').classList.remove('hidden');
+      document.getElementById('progress-text').textContent = '正在生成剧本...这可能需要1-2分钟';
+      
+      // 关闭之前的 SSE 连接
+      if (eventSource) {
+        eventSource.close();
+      }
+      
+      try {
+        // 构建 SSE URL
+        const params = new URLSearchParams({
+          theme,
+          playerCount: playerCount.toString(),
+          difficulty: difficulty.toString(),
+          stream: 'true'
+        });
+        if (title) params.append('title', title);
+        if (customBackground) params.append('customBackground', customBackground);
+        
+        eventSource = new EventSource(`${API_BASE}/generate/stream?${params.toString()}`);
+        
+        eventSource.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          
+          switch (data.type) {
+            case 'start':
+              terminalLog(`📋 任务ID: ${data.taskId}`, 'info');
+              updateProgressBar(0);
+              break;
+              
+            case 'step':
+              terminalLogStep(data.step, data.description);
+              document.getElementById('progress-text').textContent = 
+                `步骤 ${data.step}/10: ${data.description}`;
+              updateProgressBar(data.step);
+              break;
+              
+            case 'ai_request':
+              terminalLog(`🔄 发送AI请求: ${data.action}`, 'info');
+              break;
+              
+            case 'ai_response':
+              terminalLogAI(data.content);
+              break;
+              
+            case 'progress':
+              terminalLog(`✅ ${data.message}`, 'success');
+              break;
+              
+            case 'warning':
+              terminalLog(`⚠️ ${data.message}`, 'warning');
+              break;
+              
+            case 'error':
+              terminalLog(`❌ ${data.message}`, 'error');
+              break;
+              
+            case 'complete':
+              terminalLog('', 'info');
+              terminalLog('🎉 剧本生成完成！', 'success');
+              terminalLog(`剧本ID: ${data.scriptId}`, 'info');
+              terminalLog(`标题: ${data.title}`, 'info');
+              updateProgressBar(10);
+              eventSource.close();
+              eventSource = null;
+              
+              // 更新UI
+              document.getElementById('generate-btn').disabled = false;
+              document.getElementById('generate-progress').classList.add('hidden');
+              loadStats();
+              loadScripts();
+              viewScript(data.scriptId);
+              break;
+          }
+        };
+        
+        eventSource.onerror = (error) => {
+          console.error('SSE 错误:', error);
+          terminalLog('❌ 连接中断，切换到普通模式...', 'error');
+          eventSource.close();
+          eventSource = null;
+          
+          // 降级到普通请求
+          fallbackGenerate(theme, playerCount, difficulty, title, customBackground);
+        };
+        
+      } catch (error) {
+        console.error('生成失败:', error);
+        terminalLog(`❌ 生成失败: ${error.message}`, 'error');
+        document.getElementById('generate-btn').disabled = false;
+        document.getElementById('generate-progress').classList.add('hidden');
+      }
+    }
+    
+    // 降级：普通请求模式
+    async function fallbackGenerate(theme, playerCount, difficulty, title, customBackground) {
+      terminalLog('使用普通模式生成...', 'warning');
+      
+      try {
+        const res = await fetch(`${API_BASE}/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ theme, playerCount, difficulty, title, customBackground })
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+          terminalLog('🎉 剧本生成完成！', 'success');
+          await loadStats();
+          await loadScripts();
+          viewScript(data.script.id);
+        } else {
+          terminalLog(`❌ 生成失败: ${data.error}`, 'error');
+        }
+      } catch (error) {
+        console.error('生成失败:', error);
+        terminalLog(`❌ 生成失败: ${error.message}`, 'error');
+      } finally {
+        document.getElementById('generate-btn').disabled = false;
+        document.getElementById('generate-progress').classList.add('hidden');
+      }
+    }
+    
+    // 快速生成
+    function quickGenerate(themeId) {
+      showPage('generate');
+      const radio = document.querySelector(`input[name="theme"][value="${themeId}"]`);
+      if (radio) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event('change'));
+      }
+    }
+    
+    // 查看剧本详情
+    async function viewScript(scriptId) {
+      currentScriptId = scriptId;
+      
+      try {
+        const res = await fetch(`${API_BASE}/${scriptId}?full=true`);
+        const data = await res.json();
+        
+        if (data.success) {
+          renderScriptModal(data.script);
+          document.getElementById('script-modal').classList.add('active');
+        }
+      } catch (error) {
+        console.error('获取详情失败:', error);
+        alert('获取详情失败');
+      }
+    }
+    
+    // 渲染剧本详情模态框
+    function renderScriptModal(script) {
+      document.getElementById('modal-title').textContent = script.title;
+      
+      const content = document.getElementById('modal-content');
+      content.innerHTML = `
+        <div class="space-y-6">
+          <!-- 基本信息 -->
+          <div>
+            <h4 class="text-lg font-bold mb-2">📋 基本信息</h4>
+            <div class="grid grid-cols-2 gap-4 text-sm">
+              <div><span class="text-gray-400">状态:</span> <span class="status-${script.status}">${getStatusText(script.status)}</span></div>
+              <div><span class="text-gray-400">主题:</span> ${getThemeName(script.theme)}</div>
+              <div><span class="text-gray-400">玩家人数:</span> ${script.min_players}-${script.max_players}人</div>
+              <div><span class="text-gray-400">难度:</span> ${'⭐'.repeat(script.difficulty)}</div>
+              <div><span class="text-gray-400">预计时长:</span> ${script.estimated_duration}分钟</div>
+              <div><span class="text-gray-400">游玩次数:</span> ${script.play_count}</div>
+            </div>
+            ${script.description ? `<p class="mt-3 text-gray-300">${script.description}</p>` : ''}
+          </div>
+          
+          <!-- 案件真相 -->
+          ${script.truth ? `
+          <div>
+            <h4 class="text-lg font-bold mb-2">🔍 案件真相 <span class="text-red-400 text-sm">(剧透)</span></h4>
+            <div class="bg-red-900/20 border border-red-800/50 rounded-lg p-4 text-sm">
+              <p><span class="text-gray-400">受害者:</span> ${script.truth.victim_name}</p>
+              <p><span class="text-gray-400">作案动机:</span> ${script.truth.murder_motive}</p>
+              <p><span class="text-gray-400">作案手法:</span> ${script.truth.murder_method}</p>
+              <p class="mt-2">${script.truth.full_truth}</p>
+            </div>
+          </div>
+          ` : ''}
+          
+          <!-- 角色列表 -->
+          <div>
+            <h4 class="text-lg font-bold mb-2">👥 角色 (${script.characters?.length || 0})</h4>
+            <div class="grid grid-cols-2 gap-3">
+              ${(script.characters || []).map(c => `
+                <div class="bg-gray-800/50 rounded-lg p-3 ${c.is_murderer ? 'border border-red-500' : ''}">
+                  <div class="font-bold">${c.name} ${c.is_murderer ? '🔪' : ''}</div>
+                  <div class="text-sm text-gray-400">${c.occupation || c.character_type}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- 章节 -->
+          <div>
+            <h4 class="text-lg font-bold mb-2">📖 章节 (${script.chapters?.length || 0})</h4>
+            <div class="space-y-2">
+              ${(script.chapters || []).map(c => `
+                <div class="bg-gray-800/50 rounded-lg p-3">
+                  <div class="font-bold">第${c.chapter_number}章: ${c.title}</div>
+                  <div class="text-sm text-gray-400">${c.chapter_goal}</div>
+                  <div class="text-xs text-purple-400 mt-1">谜题: ${c.puzzles?.length || 0}个</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- 线索和地点 -->
+          <div class="grid grid-cols-2 gap-6">
+            <div>
+              <h4 class="text-lg font-bold mb-2">🔑 线索 (${script.clues?.length || 0})</h4>
+              <div class="space-y-1 max-h-40 overflow-y-auto text-sm">
+                ${(script.clues || []).slice(0, 10).map(c => `
+                  <div class="py-1">${c.is_key_evidence ? '⭐' : '•'} ${c.clue_name}</div>
+                `).join('')}
+              </div>
+            </div>
+            <div>
+              <h4 class="text-lg font-bold mb-2">📍 地点 (${script.locations?.length || 0})</h4>
+              <div class="space-y-1 max-h-40 overflow-y-auto text-sm">
+                ${(script.locations || []).map(l => `
+                  <div class="py-1">• ${l.name}</div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      // 更新发布按钮状态
+      const btnPublish = document.getElementById('btn-publish');
+      if (script.is_published) {
+        btnPublish.textContent = '✅ 已发布';
+        btnPublish.disabled = true;
+        btnPublish.classList.add('opacity-50');
+      } else {
+        btnPublish.textContent = '🚀 发布剧本';
+        btnPublish.disabled = false;
+        btnPublish.classList.remove('opacity-50');
+      }
+    }
+    
+    // 关闭模态框
+    function closeModal() {
+      document.getElementById('script-modal').classList.remove('active');
+      currentScriptId = null;
+    }
+    
+    // 发布剧本
+    async function publishScript() {
+      if (!currentScriptId) return;
+      
+      if (!confirm('确定要发布此剧本吗？发布后将可以在游戏中使用。')) return;
+      
+      try {
+        const res = await fetch(`${API_BASE}/${currentScriptId}/publish`, {
+          method: 'POST'
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+          alert('发布成功！');
+          closeModal();
+          await loadStats();
+          await loadScripts();
+        } else {
+          alert('发布失败: ' + (data.errors?.join(', ') || data.error));
+        }
+      } catch (error) {
+        alert('发布失败: ' + error.message);
+      }
+    }
+    
+    // 导出剧本
+    function exportScript() {
+      if (!currentScriptId) return;
+      window.open(`${API_BASE}/${currentScriptId}/export`, '_blank');
+    }
+    
+    // 删除剧本
+    async function deleteScript() {
+      if (!currentScriptId) return;
+      
+      if (!confirm('确定要删除此剧本吗？此操作不可恢复！')) return;
+      
+      try {
+        const res = await fetch(`${API_BASE}/${currentScriptId}`, {
+          method: 'DELETE'
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+          alert('删除成功');
+          closeModal();
+          await loadStats();
+          await loadScripts();
+        } else {
+          alert('删除失败: ' + data.error);
+        }
+      } catch (error) {
+        alert('删除失败: ' + error.message);
+      }
+    }
+    
+    // 点击模态框外部关闭
+    document.getElementById('script-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'script-modal') {
+        closeModal();
+      }
+    });
+  </script>
+</body>
+</html>

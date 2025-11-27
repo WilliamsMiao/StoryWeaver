@@ -2,6 +2,8 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import os from 'os';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import config from './config/index.js';
 import database from './storage/database.js';
 import gameEngine from './game-engine/GameEngine.js';
@@ -9,6 +11,16 @@ import { errorHandler, asyncHandler, AppError, socketErrorHandler } from './midd
 import { requestLogger, socketLogger, errorLogger } from './middleware/logger.js';
 import rateLimiter from './middleware/rateLimiter.js';
 import { metricsMiddleware, metricsEndpoint } from './middleware/metrics.js';
+// 剧本工厂
+import { scriptRouter, initScriptFactory, scriptGenerator } from './script-factory/index.js';
+import AIService from './ai-service/AIService.js';
+// 增强游戏状态管理
+import enhancedGameStateManager from './game-engine/EnhancedGameStateManager.js';
+// NPC对话服务
+import { getNpcDialogueService } from './ai-service/NpcDialogueService.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 class StoryWeaverServer {
   constructor() {
@@ -108,6 +120,14 @@ class StoryWeaverServer {
   }
   
   setupRoutes() {
+    // 剧本工厂 API
+    this.app.use('/api/scripts', scriptRouter);
+    
+    // 剧本工厂管理后台静态页面
+    this.app.get('/admin/scripts', (req, res) => {
+      res.sendFile(path.join(__dirname, 'script-factory', 'admin.html'));
+    });
+    
     // API路由 - 使用asyncHandler包装异步函数
     this.app.get('/api/rooms/:roomId', asyncHandler(async (req, res) => {
       const { roomId } = req.params;
@@ -209,6 +229,7 @@ class StoryWeaverServer {
           socket.join(room.id);
           socket.data.roomId = room.id;
           socket.data.playerId = playerId;
+          socket.data.username = username; // 保存用户名
           clearTimeout(connectionTimeout);
           
           socketLogger(socket, 'room_created', { roomId: room.id });
@@ -246,6 +267,7 @@ class StoryWeaverServer {
           socket.join(roomId);
           socket.data.roomId = roomId;
           socket.data.playerId = playerId;
+          socket.data.username = username; // 保存用户名
           clearTimeout(connectionTimeout);
           
           socketLogger(socket, 'room_joined', { roomId, username });
@@ -425,6 +447,7 @@ class StoryWeaverServer {
           }
           
           // 处理消息（包括AI响应等）
+          console.log(`[send_message] 开始处理消息, 玩家: ${playerId}, 类型: ${messageType}, 房间: ${roomId}`);
           const result = await gameEngine.processMessage(
             roomId, 
             playerId, 
@@ -433,6 +456,7 @@ class StoryWeaverServer {
             recipientId,
             recipientName
           );
+          console.log(`[send_message] 消息处理完成, storyMachineMessage存在: ${!!result.storyMachineMessage}`);
           clearTimeout(timeout);
           
           const room = gameEngine.getRoomStatus(roomId);
@@ -821,6 +845,384 @@ class StoryWeaverServer {
         }
       }));
       
+      // ==================== 使用预制剧本初始化故事 ====================
+      socket.on('initialize_with_script', wrapSocketHandler('initialize_with_script', async (data, callback) => {
+        try {
+          const { scriptId } = data;
+          const { roomId, playerId } = socket.data;
+          
+          if (!roomId || !playerId) {
+            return callback({ 
+              success: false,
+              error: '未加入房间',
+              code: 'NOT_IN_ROOM'
+            });
+          }
+          
+          const roomStatus = gameEngine.getRoomStatus(roomId);
+          if (!roomStatus) {
+            return callback({ 
+              success: false,
+              error: '房间不存在',
+              code: 'ROOM_NOT_FOUND'
+            });
+          }
+          
+          if (roomStatus.hostId !== playerId) {
+            return callback({ 
+              success: false,
+              error: '只有房主可以初始化故事',
+              code: 'PERMISSION_DENIED'
+            });
+          }
+          
+          if (!scriptId) {
+            return callback({
+              success: false,
+              error: '请选择一个剧本',
+              code: 'INVALID_INPUT'
+            });
+          }
+          
+          console.log(`📚 [剧本加载] 房间 ${roomId} 加载剧本 ${scriptId}`);
+          
+          // 使用剧本初始化故事
+          const result = await gameEngine.initializeWithScript(roomId, scriptId);
+          
+          const story = result.story;
+          const room = result.room;
+          
+          socketLogger(socket, 'story_initialized_with_script', { roomId, storyId: story.id, scriptId });
+          
+          // 广播初始章节
+          if (result.firstChapter) {
+            io.to(roomId).emit('new_chapter', {
+              chapter: result.firstChapter,
+              author: { id: 'system', username: '系统' },
+              room: room.toJSON()
+            });
+          }
+          
+          // 发送故事机初始消息给每个玩家（包含角色信息）
+          if (result.characterAssignments) {
+            result.characterAssignments.forEach(assignment => {
+              const targetSocket = Array.from(io.sockets.sockets.values())
+                .find(s => s.data.playerId === assignment.playerId && s.data.roomId === roomId);
+              if (targetSocket) {
+                targetSocket.emit('character_assigned', {
+                  character: assignment.character,
+                  message: `你将扮演 ${assignment.characterName}。\n\n${assignment.character.publicInfo}\n\n【秘密信息】\n${assignment.character.secretInfo}`
+                });
+              }
+            });
+          }
+          
+          // 广播TODO列表
+          if (result.todos) {
+            io.to(roomId).emit('feedback_progress_update', {
+              chapterId: result.firstChapter?.id,
+              todos: result.todos,
+              playersProgress: {}
+            });
+          }
+          
+          callback({ 
+            success: true, 
+            room: room.toJSON(),
+            storyOutline: result.storyOutline
+          });
+          
+          // 广播故事初始化
+          io.to(roomId).emit('story_initialized', {
+            story: story.toJSON(),
+            room: room.toJSON(),
+            storyOutline: result.storyOutline,
+            isPrebuiltScript: true,
+            scriptId: scriptId
+          });
+          
+          // 初始化增强游戏状态管理
+          const players = roomStatus.players.map(p => ({ id: p.id, username: p.username }));
+          await enhancedGameStateManager.initializeGameState(roomId, scriptId, players);
+          console.log(`🎮 [增强状态] 已为房间 ${roomId} 初始化增强游戏状态`);
+          
+        } catch (error) {
+          errorLogger(error, { event: 'initialize_with_script', socketId: socket.id });
+          callback({ 
+            success: false,
+            error: error.message,
+            code: error.code || 'INTERNAL_ERROR'
+          });
+        }
+      }));
+      
+      // ==================== 使用技能 ====================
+      socket.on('use_skill', wrapSocketHandler('use_skill', async (data, callback) => {
+        try {
+          const { skillId, targetCharacterId, targetInfo } = data;
+          const { roomId, playerId } = socket.data;
+          
+          if (!roomId || !playerId) {
+            return callback({ success: false, error: '未加入房间' });
+          }
+          
+          const result = await enhancedGameStateManager.useSkill(
+            roomId, 
+            playerId, 
+            skillId, 
+            { targetCharacterId, ...targetInfo }
+          );
+          
+          if (result.success) {
+            socketLogger(socket, 'skill_used', { roomId, skillId, skillName: result.skillName });
+            
+            // 通知房间内所有玩家技能被使用（但不透露具体效果给其他人）
+            socket.to(roomId).emit('player_used_skill', {
+              playerId,
+              skillName: result.skillName,
+              message: `${socket.data.username} 使用了技能【${result.skillName}】`
+            });
+            
+            callback({ 
+              success: true, 
+              skillName: result.skillName,
+              effect: result.effect,
+              message: result.message
+            });
+          } else {
+            callback({ success: false, error: result.error });
+          }
+        } catch (error) {
+          errorLogger(error, { event: 'use_skill', socketId: socket.id });
+          callback({ success: false, error: error.message });
+        }
+      }));
+      
+      // ==================== 获取玩家技能列表 ====================
+      socket.on('get_player_skills', wrapSocketHandler('get_player_skills', async (data, callback) => {
+        try {
+          const { roomId, playerId } = socket.data;
+          
+          if (!roomId || !playerId) {
+            return callback({ success: false, error: '未加入房间' });
+          }
+          
+          const skills = enhancedGameStateManager.getPlayerSkills(roomId, playerId);
+          callback({ success: true, skills });
+        } catch (error) {
+          callback({ success: false, error: error.message });
+        }
+      }));
+      
+      // ==================== 获取凶手引导 ====================
+      socket.on('get_murderer_guidance', wrapSocketHandler('get_murderer_guidance', async (data, callback) => {
+        try {
+          const { roomId, playerId } = socket.data;
+          
+          if (!roomId || !playerId) {
+            return callback({ success: false, error: '未加入房间' });
+          }
+          
+          const gameState = enhancedGameStateManager.getGameState(roomId);
+          if (!gameState || gameState.murdererPlayerId !== playerId) {
+            return callback({ success: false, error: '你不是凶手或游戏未开始' });
+          }
+          
+          const guidance = await enhancedGameStateManager.getMurdererGuidance(roomId);
+          callback({ success: true, guidance });
+        } catch (error) {
+          callback({ success: false, error: error.message });
+        }
+      }));
+      
+      // ==================== 推进章节 ====================
+      socket.on('advance_chapter', wrapSocketHandler('advance_chapter', async (data, callback) => {
+        try {
+          const { roomId, playerId } = socket.data;
+          
+          if (!roomId || !playerId) {
+            return callback({ success: false, error: '未加入房间' });
+          }
+          
+          const roomStatus = gameEngine.getRoomStatus(roomId);
+          if (roomStatus?.hostId !== playerId) {
+            return callback({ success: false, error: '只有房主可以推进章节' });
+          }
+          
+          const result = await enhancedGameStateManager.advanceChapter(roomId);
+          
+          if (result.canAdvance) {
+            socketLogger(socket, 'chapter_advanced', { roomId, newChapter: result.newChapter });
+            
+            // 广播章节推进
+            io.to(roomId).emit('chapter_advanced', {
+              newChapter: result.newChapter,
+              chapterTitle: result.chapterTitle,
+              revealedLayers: result.revealedLayers,
+              message: `故事进入第${result.newChapter}章：${result.chapterTitle || ''}`
+            });
+            
+            callback({ success: true, ...result });
+          } else {
+            callback({ success: false, error: result.reason });
+          }
+        } catch (error) {
+          errorLogger(error, { event: 'advance_chapter', socketId: socket.id });
+          callback({ success: false, error: error.message });
+        }
+      }));
+      
+      // ==================== 与NPC对话 ====================
+      socket.on('talk_to_npc', wrapSocketHandler('talk_to_npc', async (data, callback) => {
+        try {
+          const { npcCharacterId, message, isPrivate } = data;
+          const { roomId, playerId } = socket.data;
+          
+          if (!roomId || !playerId) {
+            return callback({ success: false, error: '未加入房间' });
+          }
+          
+          const gameState = enhancedGameStateManager.getGameState(roomId);
+          if (!gameState) {
+            return callback({ success: false, error: '游戏状态不存在' });
+          }
+          
+          const player = gameState.players.find(p => p.id === playerId);
+          const npcService = getNpcDialogueService(AIService.provider);
+          
+          const result = await npcService.generateNpcResponse({
+            scriptId: gameState.scriptId,
+            npcCharacterId,
+            playerMessage: message,
+            playerName: player?.username || '玩家',
+            isPrivate: isPrivate || false,
+            gameContext: {
+              currentChapter: gameState.currentChapter
+            }
+          });
+          
+          if (result.success) {
+            socketLogger(socket, 'npc_dialogue', { roomId, npcCharacterId, isPrivate });
+            
+            // 如果是公开对话，广播给所有人
+            if (!isPrivate) {
+              io.to(roomId).emit('npc_response', {
+                npcName: result.npcName,
+                response: result.response,
+                emotionalTone: result.emotionalTone,
+                playerId,
+                playerName: player?.username
+              });
+            }
+            
+            callback({ 
+              success: true, 
+              npcName: result.npcName,
+              response: result.response,
+              emotionalTone: result.emotionalTone,
+              revealedInfo: result.revealedInfo
+            });
+          } else {
+            callback({ success: false, error: '对话失败' });
+          }
+        } catch (error) {
+          errorLogger(error, { event: 'talk_to_npc', socketId: socket.id });
+          callback({ success: false, error: error.message });
+        }
+      }));
+      
+      // ==================== 提交最终指控 ====================
+      socket.on('submit_accusation', wrapSocketHandler('submit_accusation', async (data, callback) => {
+        try {
+          const { accusedCharacterId, motive } = data;
+          const { roomId, playerId } = socket.data;
+          
+          if (!roomId || !playerId) {
+            return callback({ success: false, error: '未加入房间' });
+          }
+          
+          // 记录指控
+          enhancedGameStateManager.recordAccusation(roomId, playerId, accusedCharacterId, motive);
+          
+          socketLogger(socket, 'accusation_submitted', { roomId, accusedCharacterId });
+          
+          // 广播指控
+          const gameState = enhancedGameStateManager.getGameState(roomId);
+          const player = gameState?.players.find(p => p.id === playerId);
+          const accusedPlayer = gameState?.players.find(p => p.characterId === accusedCharacterId);
+          
+          io.to(roomId).emit('accusation_made', {
+            accuserId: playerId,
+            accuserName: player?.username,
+            accusedCharacterName: accusedPlayer?.characterName,
+            motive,
+            message: `${player?.username} 指控 ${accusedPlayer?.characterName} 是凶手！`
+          });
+          
+          callback({ success: true });
+        } catch (error) {
+          callback({ success: false, error: error.message });
+        }
+      }));
+      
+      // ==================== 确定最终结局 ====================
+      socket.on('determine_ending', wrapSocketHandler('determine_ending', async (data, callback) => {
+        try {
+          const { finalAccusation } = data;
+          const { roomId, playerId } = socket.data;
+          
+          if (!roomId || !playerId) {
+            return callback({ success: false, error: '未加入房间' });
+          }
+          
+          const roomStatus = gameEngine.getRoomStatus(roomId);
+          if (roomStatus?.hostId !== playerId) {
+            return callback({ success: false, error: '只有房主可以结束游戏' });
+          }
+          
+          const result = await enhancedGameStateManager.determineEnding(roomId, finalAccusation);
+          
+          if (result) {
+            socketLogger(socket, 'game_ended', { roomId, ending: result.ending.ending_type });
+            
+            // 广播游戏结局
+            io.to(roomId).emit('game_ended', {
+              ending: result.ending,
+              isCorrect: result.isCorrect,
+              totalScore: result.totalScore,
+              conditions: result.conditions,
+              message: result.ending.ending_narration
+            });
+            
+            // 清理游戏状态
+            enhancedGameStateManager.clearGameState(roomId);
+            
+            callback({ success: true, ...result });
+          } else {
+            callback({ success: false, error: '无法确定结局' });
+          }
+        } catch (error) {
+          errorLogger(error, { event: 'determine_ending', socketId: socket.id });
+          callback({ success: false, error: error.message });
+        }
+      }));
+      
+      // ==================== 获取游戏进度 ====================
+      socket.on('get_game_progress', wrapSocketHandler('get_game_progress', async (data, callback) => {
+        try {
+          const { roomId } = socket.data;
+          
+          if (!roomId) {
+            return callback({ success: false, error: '未加入房间' });
+          }
+          
+          const progress = enhancedGameStateManager.getProgressSummary(roomId);
+          callback({ success: true, progress });
+        } catch (error) {
+          callback({ success: false, error: error.message });
+        }
+      }));
+      
       // 初始化故事
       socket.on('initialize_story', wrapSocketHandler('initialize_story', async (data, callback) => {
         try {
@@ -906,10 +1308,11 @@ class StoryWeaverServer {
           
           callback({ success: true, room: room.toJSON() });
           
-          // 广播故事初始化
+          // ★ 广播故事初始化（包含大纲） ★
           io.to(roomId).emit('story_initialized', {
             story: story.toJSON(),
-            room: room.toJSON()
+            room: room.toJSON(),
+            storyOutline: result.storyOutline || null  // 传递故事大纲给前端
           });
         } catch (error) {
           errorLogger(error, { event: 'initialize_story', socketId: socket.id });
@@ -1106,6 +1509,20 @@ class StoryWeaverServer {
       
       // 连接数据库
       await database.connect();
+      
+      // 初始化剧本工厂
+      try {
+        await initScriptFactory();
+        // 设置AI提供者（如果AIService已初始化）
+        if (AIService.provider) {
+          scriptGenerator.setAIProvider(AIService.provider);
+          console.log('📝 剧本工厂 AI 已连接');
+        }
+        console.log('🎭 剧本工厂已启动');
+        console.log('   管理后台: http://localhost:' + config.port + '/admin/scripts');
+      } catch (err) {
+        console.warn('剧本工厂初始化警告:', err.message);
+      }
       
       // 启动服务器
       this.httpServer.listen(config.port, () => {

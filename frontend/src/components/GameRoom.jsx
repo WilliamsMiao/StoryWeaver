@@ -5,6 +5,9 @@ import StoryPanel from './GameRoom/StoryPanel';
 import InputPanel from './GameRoom/InputPanel';
 import StatusPanel from './GameRoom/StatusPanel';
 import CharacterPanel from './GameRoom/CharacterPanel';
+import SkillPanel from './GameRoom/SkillPanel';
+import MurdererGuidePanel from './GameRoom/MurdererGuidePanel';
+import NpcDialoguePanel from './GameRoom/NpcDialoguePanel';
 import { FullPagePixelLoader } from './PixelLoader';
 
 export default function GameRoom() {
@@ -13,8 +16,9 @@ export default function GameRoom() {
   const { room, story, joinRoom, leaveRoom, player, socketConnected } = useGame();
   const [initialized, setInitialized] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarTab, setSidebarTab] = useState('players'); // 'players' | 'history' | 'characters'
+  const [sidebarTab, setSidebarTab] = useState('players'); // 'players' | 'history' | 'characters' | 'skills' | 'npc'
   const [copied, setCopied] = useState(false);
+  const [showMurdererGuide, setShowMurdererGuide] = useState(false);
 
   // 复制房间ID
   const copyRoomId = useCallback(() => {
@@ -99,6 +103,18 @@ export default function GameRoom() {
             >
               <span className="text-lg">{sidebarOpen ? '◀' : '▶'}</span>
             </button>
+            {/* 凶手指南按钮 - 仅凶手可见 */}
+            {player?.isMurderer && (
+              <button
+                onClick={() => setShowMurdererGuide(!showMurdererGuide)}
+                className={`p-2 border-2 border-pixel-wood-dark hover:brightness-110 transition-all ${
+                  showMurdererGuide ? 'bg-red-600 text-white' : 'bg-pixel-wood-light'
+                }`}
+                title="凶手秘密指南"
+              >
+                <span className="text-lg">🔪</span>
+              </button>
+            )}
             <button
               onClick={() => {
                 leaveRoom();
@@ -111,6 +127,11 @@ export default function GameRoom() {
           </div>
         </div>
       </header>
+
+      {/* 凶手指南面板 - 浮动显示 */}
+      {showMurdererGuide && player?.isMurderer && (
+        <MurdererGuidePanel onClose={() => setShowMurdererGuide(false)} />
+      )}
 
       {/* 主内容区 - 双栏布局 */}
       <div className="flex-1 flex overflow-hidden">
@@ -136,10 +157,10 @@ export default function GameRoom() {
           {sidebarOpen && (
             <div className="h-full flex flex-col w-72 xl:w-80">
               {/* 侧边栏标签切换 */}
-              <div className="flex-shrink-0 flex border-b-4 border-pixel-wood-dark">
+              <div className="flex-shrink-0 flex flex-wrap border-b-4 border-pixel-wood-dark">
                 <button
                   onClick={() => setSidebarTab('players')}
-                  className={`flex-1 py-2 text-xs font-bold transition-colors ${
+                  className={`flex-1 min-w-[60px] py-2 text-xs font-bold transition-colors ${
                     sidebarTab === 'players'
                       ? 'bg-pixel-accent-blue text-white'
                       : 'bg-pixel-wood-light text-pixel-wood-dark hover:brightness-110'
@@ -149,7 +170,7 @@ export default function GameRoom() {
                 </button>
                 <button
                   onClick={() => setSidebarTab('characters')}
-                  className={`flex-1 py-2 text-xs font-bold transition-colors ${
+                  className={`flex-1 min-w-[60px] py-2 text-xs font-bold transition-colors ${
                     sidebarTab === 'characters'
                       ? 'bg-pixel-accent-yellow text-pixel-wood-dark'
                       : 'bg-pixel-wood-light text-pixel-wood-dark hover:brightness-110'
@@ -158,8 +179,28 @@ export default function GameRoom() {
                   🎭 角色
                 </button>
                 <button
+                  onClick={() => setSidebarTab('skills')}
+                  className={`flex-1 min-w-[60px] py-2 text-xs font-bold transition-colors ${
+                    sidebarTab === 'skills'
+                      ? 'bg-pixel-accent-purple text-white'
+                      : 'bg-pixel-wood-light text-pixel-wood-dark hover:brightness-110'
+                  }`}
+                >
+                  ⚔️ 技能
+                </button>
+                <button
+                  onClick={() => setSidebarTab('npc')}
+                  className={`flex-1 min-w-[60px] py-2 text-xs font-bold transition-colors ${
+                    sidebarTab === 'npc'
+                      ? 'bg-pixel-accent-green text-white'
+                      : 'bg-pixel-wood-light text-pixel-wood-dark hover:brightness-110'
+                  }`}
+                >
+                  🤖 NPC
+                </button>
+                <button
                   onClick={() => setSidebarTab('history')}
-                  className={`flex-1 py-2 text-xs font-bold transition-colors ${
+                  className={`flex-1 min-w-[60px] py-2 text-xs font-bold transition-colors ${
                     sidebarTab === 'history'
                       ? 'bg-pixel-accent-blue text-white'
                       : 'bg-pixel-wood-light text-pixel-wood-dark hover:brightness-110'
@@ -173,6 +214,10 @@ export default function GameRoom() {
               <div className="flex-1 overflow-y-auto">
                 {sidebarTab === 'characters' ? (
                   <CharacterPanel />
+                ) : sidebarTab === 'skills' ? (
+                  <SkillPanel />
+                ) : sidebarTab === 'npc' ? (
+                  <NpcDialoguePanel />
                 ) : (
                   <StatusPanel activeTab={sidebarTab} />
                 )}

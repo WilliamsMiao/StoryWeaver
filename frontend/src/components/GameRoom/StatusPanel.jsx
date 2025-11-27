@@ -4,13 +4,81 @@ import ProgressChart from './ProgressChart';
 import ChapterHistory from './ChapterHistory';
 
 export default function StatusPanel({ activeTab = 'players' }) {
-  const { room, story, player, playersProgress, chapterTodos } = useGame();
+  const { room, story, player, playersProgress, chapterTodos, storyOutline } = useGame();
 
   const isHost = room?.hostId === player?.id;
+  
+  // 当前章节的调查任务
+  const currentTasks = chapterTodos || [];
 
   // 玩家标签页内容
   const renderPlayersTab = () => (
     <div className="p-3 space-y-3">
+      {/* 当前任务（新增）*/}
+      {story && currentTasks.length > 0 && (
+        <div className="mb-3">
+          <h3 className="text-sm font-bold mb-2 text-pixel-wood-dark flex items-center gap-2">
+            <span>📋</span>
+            <span>本章任务</span>
+          </h3>
+          <div className="space-y-1.5">
+            {currentTasks.map((task, index) => (
+              <div 
+                key={task.id || index}
+                className={`p-2 border-2 text-xs ${
+                  task.is_completed || task.completed
+                    ? 'bg-green-100 border-green-400 line-through opacity-70'
+                    : 'bg-pixel-wood-light border-pixel-wood-dark'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="flex-shrink-0">
+                    {task.is_completed || task.completed ? '✅' : '⏳'}
+                  </span>
+                  <div className="flex-1">
+                    <div className="font-bold">{task.task_description || task.description || task.content}</div>
+                    {task.target_location && (
+                      <div className="text-pixel-text-muted mt-0.5">
+                        📍 {task.target_location}
+                      </div>
+                    )}
+                    {task.target_character && (
+                      <div className="text-pixel-text-muted mt-0.5">
+                        👤 {task.target_character}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* 可调查地点提示（基于大纲）*/}
+      {storyOutline?.locations && (
+        <div className="mb-3 border-2 border-dashed border-pixel-accent-blue p-2 bg-blue-50">
+          <h3 className="text-xs font-bold mb-1 text-pixel-accent-blue flex items-center gap-1">
+            <span>🔍</span>
+            <span>可调查地点</span>
+          </h3>
+          <div className="flex flex-wrap gap-1">
+            {storyOutline.locations.map((loc, i) => (
+              <span 
+                key={i} 
+                className="px-1.5 py-0.5 text-xs bg-white border border-pixel-accent-blue"
+                title={loc.description}
+              >
+                {loc.name}
+              </span>
+            ))}
+          </div>
+          <p className="text-xs text-pixel-text-muted mt-1.5 italic">
+            💡 在故事机对话中说"去XX调查"或"检查XX"
+          </p>
+        </div>
+      )}
+
       {/* 玩家列表 */}
       <div>
         <h3 className="text-sm font-bold mb-2 text-pixel-wood-dark flex items-center gap-2">
