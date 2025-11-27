@@ -22,7 +22,7 @@ services:
       - LOCAL_AI_URL=${LOCAL_AI_URL:-http://localhost:11434}
       - LOCAL_AI_MODEL=${LOCAL_AI_MODEL:-deepseek-chat}
       - DB_PATH=/app/data/storyweaver.db
-      - SCRIPT_FACTORY_DB_PATH=/app/script-factory-data/scripts.db
+      - SCRIPT_FACTORY_DB_PATH=/app/data/scripts.db
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
@@ -30,8 +30,6 @@ services:
       - storyweaver-logs:/app/logs
       # 挂载后端代码目录，实现代码热更新（生产环境）
       - ./backend:/app/backend:ro
-      # 剧本工厂数据库目录（独立volume，可写）
-      - storyweaver-scripts:/app/script-factory-data
     networks:
       - storyweaver-network
     healthcheck:
@@ -106,8 +104,6 @@ volumes:
   storyweaver-logs:
     driver: local
   storyweaver-static:
-    driver: local
-  storyweaver-scripts:
     driver: local
 
 # =============================================
