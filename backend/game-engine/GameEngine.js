@@ -308,8 +308,9 @@ class GameEngine {
    * 使用预制剧本初始化故事
    * @param {string} roomId - 房间ID
    * @param {string} scriptId - 剧本ID
+   * @param {Function} onProgress - 进度回调函数
    */
-  async initializeWithScript(roomId, scriptId) {
+  async initializeWithScript(roomId, scriptId, onProgress = () => {}) {
     const room = this.rooms.get(roomId);
     if (!room) {
       throw new Error('房间不存在');
@@ -330,6 +331,7 @@ class GameEngine {
     console.log(`📚 [剧本模式] 加载剧本 ${scriptId} 到房间 ${roomId}`);
     
     // 加载剧本
+    onProgress(1, '正在加载剧本数据...');
     const script = await scriptAdapter.loadScriptForGame(scriptId);
     if (!script) {
       throw new Error('剧本不存在或未发布');
@@ -352,9 +354,13 @@ class GameEngine {
         throw new Error(`此剧本最多支持 ${script.maxPlayers} 名玩家`);
       }
       
+      onProgress(2, '正在分配角色...');
+      
       // 分配角色给玩家
       const characterAssignments = scriptAdapter.assignCharactersToPlayers(script, players);
       console.log(`📚 [剧本模式] 角色分配完成:`, characterAssignments.map(a => `${a.playerName} -> ${a.characterName}`));
+      
+      onProgress(3, '正在初始化故事系统...');
       
       // 初始化章节管理系统
       const chapterTriggerOptions = getChapterTriggerOptions();
@@ -410,6 +416,8 @@ class GameEngine {
       // 记录剧本使用
       await scriptAdapter.logUsage(scriptId, roomId);
       
+      onProgress(4, '正在生成故事开篇...');
+      
       // 生成第一章节内容
       const firstChapter = await this.generateFirstChapterFromScript(story, script);
       
@@ -420,6 +428,8 @@ class GameEngine {
         { id: 2, text: '与其他角色交流获取信息', completed: false },
         { id: 3, text: '搜索可疑地点寻找线索', completed: false }
       ] : [];
+      
+      onProgress(5, '初始化完成！');
       
       console.log(`📚 [剧本模式] 故事初始化完成! storyId: ${storyId}`);
       

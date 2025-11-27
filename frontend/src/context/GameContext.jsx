@@ -33,6 +33,7 @@ export const GameProvider = ({ children }) => {
   const [unreadDirectCount, setUnreadDirectCount] = useState(0); // 未读私聊消息数
   const [loading, setLoading] = useState(false);
   const [storyInitializing, setStoryInitializing] = useState(false); // 故事正在初始化中
+  const [initProgress, setInitProgress] = useState({ step: 0, total: 5, message: '' }); // 初始化进度
   const [error, setError] = useState(null);
   const [playersProgress, setPlayersProgress] = useState({}); // 玩家反馈进度
   const [chapterTodos, setChapterTodos] = useState([]); // 章节TODO列表
@@ -402,6 +403,16 @@ export const GameProvider = ({ children }) => {
       }
     };
     
+    // ★ 新增：处理初始化进度更新
+    const handleInitProgress = (data) => {
+      console.log('📊 初始化进度:', data);
+      setInitProgress({
+        step: data.step || 0,
+        total: data.total || 5,
+        message: data.message || '处理中...'
+      });
+    };
+
     // ★ 新增：处理分支事件触发
     const handleBranchEventTriggered = (data) => {
       console.log('分支事件触发:', data);
@@ -452,6 +463,7 @@ export const GameProvider = ({ children }) => {
     socketManager.on('game_state_update', handleGameStateUpdate);
     socketManager.on('branch_event_triggered', handleBranchEventTriggered);
     socketManager.on('ending_triggered', handleEndingTriggered);
+    socketManager.on('initialization_progress', handleInitProgress);
     
     return () => {
       socketManager.off('connection_status', handleConnectionStatus);
@@ -472,6 +484,7 @@ export const GameProvider = ({ children }) => {
       socketManager.off('game_state_update', handleGameStateUpdate);
       socketManager.off('branch_event_triggered', handleBranchEventTriggered);
       socketManager.off('ending_triggered', handleEndingTriggered);
+      socketManager.off('initialization_progress', handleInitProgress);
     };
   }, []);
 
@@ -1056,6 +1069,7 @@ export const GameProvider = ({ children }) => {
     myCharacter, // ★ 新增：我的角色（剧本模式）
     loading,
     storyInitializing,
+    initProgress,
     error,
     // 新增谜题相关状态
     currentPuzzle,

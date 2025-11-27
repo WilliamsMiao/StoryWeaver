@@ -8,7 +8,7 @@ export default function StoryPanel() {
   const { 
     story, messages, room, storyMachineMessages, directMessages, 
     unreadDirectCount, clearUnreadDirectCount, player, initializeStory, 
-    storyInitializing, error, currentPuzzle, puzzleProgress, puzzleSolvedNotification,
+    storyInitializing, initProgress, error, currentPuzzle, puzzleProgress, puzzleSolvedNotification,
     initializeWithScript
   } = useGame();
   const messagesEndRef = useRef(null);
@@ -503,24 +503,51 @@ export default function StoryPanel() {
       >
         {/* 故事生成中的加载消息框 */}
         {storyInitializing && (
-          <div className="border-l-4 border-pixel-accent-blue pl-4 py-3 bg-pixel-accent-blue/10 rounded-r-lg animate-pulse">
-            <div className="flex items-center gap-3 mb-2">
+          <div className="border-l-4 border-pixel-accent-blue pl-4 py-4 bg-pixel-accent-blue/10 rounded-r-lg">
+            <div className="flex items-center gap-3 mb-3">
               <div className="flex items-center gap-2">
                 <span className="text-2xl animate-bounce">🤖</span>
                 <span className="text-sm font-bold text-pixel-accent-blue">故事机</span>
               </div>
-              <div className="flex gap-1">
-                <span className="w-2 h-2 bg-pixel-accent-blue rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                <span className="w-2 h-2 bg-pixel-accent-blue rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                <span className="w-2 h-2 bg-pixel-accent-blue rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+            </div>
+            
+            {/* 进度条 */}
+            <div className="mb-3">
+              <div className="w-full h-3 bg-pixel-wood-dark/20 rounded-full overflow-hidden border border-pixel-wood-dark/30">
+                <div 
+                  className="h-full bg-gradient-to-r from-pixel-accent-blue to-pixel-accent-green transition-all duration-500 ease-out"
+                  style={{ width: `${(initProgress.step / initProgress.total) * 100}%` }}
+                ></div>
+              </div>
+              <div className="flex justify-between mt-1 text-xs text-pixel-wood-dark/70">
+                <span>步骤 {initProgress.step}/{initProgress.total}</span>
+                <span>{Math.round((initProgress.step / initProgress.total) * 100)}%</span>
               </div>
             </div>
-            <div className="text-lg text-pixel-wood-dark font-medium">
-              <span className="inline-block">正在构思精彩的故事开篇</span>
-              <span className="inline-block ml-1 animate-pulse">...</span>
+            
+            {/* 当前步骤提示 */}
+            <div className="text-lg text-pixel-wood-dark font-medium flex items-center gap-2">
+              <span className="inline-block w-2 h-2 bg-pixel-accent-blue rounded-full animate-pulse"></span>
+              <span>{initProgress.message || '准备中...'}</span>
             </div>
-            <div className="text-xs text-pixel-wood-dark/70 mt-2">
-              ✨ AI 正在根据您的设定创作独特的故事世界
+            
+            {/* 步骤列表 */}
+            <div className="mt-3 text-xs text-pixel-wood-dark/60 space-y-1">
+              <div className={`flex items-center gap-2 ${initProgress.step >= 1 ? 'text-pixel-accent-green' : ''}`}>
+                {initProgress.step >= 1 ? '✅' : '⏳'} 加载剧本数据
+              </div>
+              <div className={`flex items-center gap-2 ${initProgress.step >= 2 ? 'text-pixel-accent-green' : ''}`}>
+                {initProgress.step >= 2 ? '✅' : '⏳'} 分配角色
+              </div>
+              <div className={`flex items-center gap-2 ${initProgress.step >= 3 ? 'text-pixel-accent-green' : ''}`}>
+                {initProgress.step >= 3 ? '✅' : '⏳'} 初始化故事系统
+              </div>
+              <div className={`flex items-center gap-2 ${initProgress.step >= 4 ? 'text-pixel-accent-green' : ''}`}>
+                {initProgress.step >= 4 ? '✅' : '⏳'} 生成故事开篇
+              </div>
+              <div className={`flex items-center gap-2 ${initProgress.step >= 5 ? 'text-pixel-accent-green' : ''}`}>
+                {initProgress.step >= 5 ? '✅' : '⏳'} 完成初始化
+              </div>
             </div>
           </div>
         )}

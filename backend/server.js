@@ -941,11 +941,24 @@ class StoryWeaverServer {
           
           console.log(`📚 [剧本加载] 房间 ${roomId} 加载剧本 ${scriptId}`);
           
-          // 使用剧本初始化故事
-          const result = await gameEngine.initializeWithScript(roomId, scriptId);
+          // 发送初始化进度
+          const sendProgress = (step, message) => {
+            io.to(roomId).emit('initialization_progress', {
+              step,
+              total: 5,
+              message
+            });
+          };
+          
+          sendProgress(1, '正在加载剧本数据...');
+          
+          // 使用剧本初始化故事（带进度回调）
+          const result = await gameEngine.initializeWithScript(roomId, scriptId, sendProgress);
           
           const story = result.story;
           const room = result.room;
+          
+          sendProgress(5, '初始化完成！');
           
           socketLogger(socket, 'story_initialized_with_script', { roomId, storyId: story.id, scriptId });
           
