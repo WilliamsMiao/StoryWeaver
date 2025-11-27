@@ -29,6 +29,8 @@ services:
       - storyweaver-logs:/app/logs
       # 挂载后端代码目录，实现代码热更新（生产环境）
       - ./backend:/app/backend:ro
+      # 剧本工厂数据库目录（需要可写）
+      - storyweaver-scripts:/app/backend/script-factory/data
     networks:
       - storyweaver-network
     healthcheck:
@@ -103,6 +105,8 @@ volumes:
   storyweaver-logs:
     driver: local
   storyweaver-static:
+    driver: local
+  storyweaver-scripts:
     driver: local
 
 # =============================================
