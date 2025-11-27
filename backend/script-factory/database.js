@@ -24,12 +24,18 @@ class ScriptDatabase {
     return new Promise((resolve, reject) => {
       // 确保数据目录存在
       const dbDir = dirname(this.dbPath);
-      if (!existsSync(dbDir)) {
-        mkdirSync(dbDir, { recursive: true });
+      try {
+        if (!existsSync(dbDir)) {
+          mkdirSync(dbDir, { recursive: true });
+          console.log('[剧本工厂] 创建数据库目录:', dbDir);
+        }
+      } catch (error) {
+        console.warn('[剧本工厂] 创建目录失败，尝试使用现有路径:', error.message);
       }
 
       this.db = new sqlite3.Database(this.dbPath, (err) => {
         if (err) {
+          console.error('[剧本工厂] 数据库连接失败:', err.message, '路径:', this.dbPath);
           reject(err);
         } else {
           console.log('[剧本工厂] 数据库连接成功:', this.dbPath);
