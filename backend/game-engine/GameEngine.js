@@ -97,7 +97,9 @@ class GameEngine {
       // 尝试从数据库加载
       const roomData = await database.getRoom(roomId);
       if (!roomData) {
-        throw new Error('房间不存在');
+        const error = new Error('房间不存在');
+        error.code = 'ROOM_NOT_FOUND';
+        throw error;
       }
       
       const newRoom = new GameRoom({

@@ -521,13 +521,16 @@ export const GameProvider = ({ children }) => {
       }, (response) => {
         setIsRejoining(false);
         if (response.error) {
-          console.error('重新加入房间失败:', response.error);
-          // 如果房间不存在了，清理 localStorage
-          if (response.code === 'ROOM_NOT_FOUND') {
+          console.error('重新加入房间失败:', response.error, 'code:', response.code);
+          // 如果房间不存在或任何严重错误，清理 localStorage
+          if (response.code === 'ROOM_NOT_FOUND' || response.code === 'INTERNAL_ERROR') {
+            console.log('房间已失效，清理本地存储');
             localStorage.removeItem('storyweaver_room');
             localStorage.removeItem('storyweaver_story');
             setRoom(null);
             setStory(null);
+            setMessages([]);
+            setStoryMachineMessages([]);
           }
         } else {
           console.log('成功重新加入房间');
