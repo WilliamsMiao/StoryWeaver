@@ -8,7 +8,7 @@ export default function StoryPanel() {
   const { 
     story, messages, room, storyMachineMessages, directMessages, 
     unreadDirectCount, clearUnreadDirectCount, player, initializeStory, 
-    storyInitializing, currentPuzzle, puzzleProgress, puzzleSolvedNotification,
+    storyInitializing, error, currentPuzzle, puzzleProgress, puzzleSolvedNotification,
     initializeWithScript
   } = useGame();
   const messagesEndRef = useRef(null);
@@ -147,13 +147,22 @@ export default function StoryPanel() {
 
   // 使用预制剧本开始游戏
   const handleSelectScript = async (script) => {
-    console.log('📚 选择剧本开始游戏:', script);
+    console.log('📚 [StoryPanel] 选择剧本开始游戏:', script);
+    
+    if (!script || !script.id) {
+      console.error('❌ [StoryPanel] 无效的剧本:', script);
+      return;
+    }
+    
     try {
+      console.log('📚 [StoryPanel] 开始初始化剧本:', script.id);
       await initializeWithScript(script.id);
-      console.log('✅ 剧本加载成功');
+      console.log('✅ [StoryPanel] 剧本加载成功');
       setShowScriptSelector(false);
     } catch (err) {
-      console.error('❌ 剧本加载失败:', err);
+      console.error('❌ [StoryPanel] 剧本加载失败:', err);
+      // 错误信息已由initializeWithScript设置到error状态
+      // 这里可以添加额外的用户提示
     }
   };
 
@@ -233,6 +242,11 @@ export default function StoryPanel() {
             showScriptSelector ? (
               // 剧本选择器
               <div className="card bg-pixel-panel p-6">
+                {error && (
+                  <div className="mb-4 p-3 bg-red-500/20 border-2 border-red-500 text-red-500 text-sm font-bold rounded">
+                    {error}
+                  </div>
+                )}
                 <ScriptSelector 
                   onSelect={handleSelectScript}
                   onCancel={() => setShowScriptSelector(false)}

@@ -754,8 +754,20 @@ export const GameProvider = ({ children }) => {
   const initializeWithScript = useCallback((scriptId) => {
     return new Promise((resolve, reject) => {
       if (!room) {
-        setError('未加入房间');
-        reject(new Error('未加入房间'));
+        const error = '未加入房间';
+        setError(error);
+        console.error('❌ [initializeWithScript]', error);
+        reject(new Error(error));
+        return;
+      }
+      
+      // 检查socket连接状态
+      const connectionStatus = socketManager.getConnectionStatus();
+      if (!connectionStatus.connected) {
+        const error = 'Socket未连接，请等待连接后重试';
+        setError(error);
+        console.error('❌ [initializeWithScript]', error, connectionStatus);
+        reject(new Error(error));
         return;
       }
       
@@ -763,19 +775,41 @@ export const GameProvider = ({ children }) => {
       setStoryInitializing(true);
       setError(null);
       
-      console.log('📚 发送 initialize_with_script 请求:', { scriptId });
+      console.log('📚 [initializeWithScript] 发送请求:', { scriptId, roomId: room.id });
+      
+      // 设置超时（30秒）
+      const timeoutId = setTimeout(() => {
+        const error = '初始化超时，请检查网络连接或稍后重试';
+        console.error('❌ [initializeWithScript] 超时:', error);
+        setLoading(false);
+        setStoryInitializing(false);
+        setError(error);
+        reject(new Error(error));
+      }, 30000);
       
       socketManager.emit('initialize_with_script', {
         scriptId
       }, (response) => {
-        console.log('📚 收到 initialize_with_script 响应:', response);
+        clearTimeout(timeoutId);
+        console.log('📚 [initializeWithScript] 收到响应:', response);
         setLoading(false);
         setStoryInitializing(false);
+        
+        if (!response) {
+          const error = '服务器无响应';
+          console.error('❌ [initializeWithScript]', error);
+          setError(error);
+          reject(new Error(error));
+          return;
+        }
+        
         if (response.error) {
-          setError(response.error);
+          console.error('❌ [initializeWithScript] 服务器返回错误:', response.error, response.code);
+          setError(response.error || '初始化失败');
           reject(new Error(response.error));
         } else {
-          setStory(response.room.story);
+          console.log('✅ [initializeWithScript] 初始化成功');
+          setStory(response.room?.story);
           setRoom(response.room);
           if (response.storyOutline) {
             setStoryOutline(response.storyOutline);

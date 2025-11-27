@@ -5,6 +5,25 @@
 
 import { useState, useEffect } from 'react';
 
+/**
+ * 获取API服务器URL
+ * 优先级：环境变量 > 当前页面origin > 默认localhost
+ */
+function getApiUrl() {
+  // 1. 优先使用环境变量
+  if (import.meta.env.VITE_SERVER_URL) {
+    return import.meta.env.VITE_SERVER_URL;
+  }
+  
+  // 2. 生产环境：使用当前页面的origin（Nginx反向代理场景）
+  if (import.meta.env.PROD) {
+    return window.location.origin;
+  }
+  
+  // 3. 开发环境默认
+  return 'http://localhost:3000';
+}
+
 export default function ScriptSelector({ onSelect, onCancel }) {
   const [scripts, setScripts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,17 +43,25 @@ export default function ScriptSelector({ onSelect, onCancel }) {
   const fetchScripts = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:3000/api/scripts?status=published');
+      const apiUrl = getApiUrl();
+      console.log('📚 [ScriptSelector] 获取剧本列表，API地址:', apiUrl);
+      const res = await fetch(`${apiUrl}/api/scripts?status=published`);
+      
+      if (!res.ok) {
+        throw new Error(`HTTP错误: ${res.status}`);
+      }
+      
       const data = await res.json();
+      console.log('📚 [ScriptSelector] 收到剧本列表响应:', data);
       
       if (data.success) {
-        setScripts(data.scripts);
+        setScripts(data.scripts || []);
       } else {
-        setError('加载剧本失败');
+        setError(data.error || '加载剧本失败');
       }
     } catch (err) {
-      console.error('获取剧本列表失败:', err);
-      setError('无法连接到服务器');
+      console.error('❌ [ScriptSelector] 获取剧本列表失败:', err);
+      setError(`无法连接到服务器: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -179,7 +206,14 @@ export default function ScriptSelector({ onSelect, onCancel }) {
           </p>
           <div className="flex gap-3">
             <button
-              onClick={() => onSelect(selectedScript)}
+              onClick={() => {
+                console.log('🎮 [ScriptSelector] 点击开始游戏按钮，剧本:', selectedScript);
+                if (onSelect) {
+                  onSelect(selectedScript);
+                } else {
+                  console.error('❌ [ScriptSelector] onSelect回调未定义');
+                }
+              }}
               className="btn-primary flex-1"
             >
               🎮 开始游戏
