@@ -314,8 +314,13 @@
   </div>
   
   <script>
-    // 配置
-    const API_BASE = 'http://localhost:3000/api/scripts';
+    // 配置 - 自动检测 API 地址
+    // 如果是在生产环境（非 localhost），使用相对路径
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const API_BASE = isLocalhost 
+      ? 'http://localhost:3000/api/scripts' 
+      : `${window.location.origin}/api/scripts`;
+    
     let currentScriptId = null;
     let themes = [];
     let eventSource = null;
@@ -405,6 +410,9 @@
     
     // 初始化
     document.addEventListener('DOMContentLoaded', async () => {
+      // 更新侧边栏显示的 API 端点
+      document.getElementById('apiEndpoint').textContent = API_BASE.replace('/api/scripts', '');
+      
       await loadThemes();
       await loadStats();
       await loadScripts();
