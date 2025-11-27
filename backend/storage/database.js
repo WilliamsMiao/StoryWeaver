@@ -653,10 +653,36 @@ class Database {
   }
   
   // 章节相关操作
-  async createChapter(id, storyId, chapterNumber, content, authorId, summary = null) {
+  async createChapter(idOrObj, storyId, chapterNumber, content, authorId, summary = null) {
+    // 支持对象参数和位置参数两种方式
+    let id, finalStoryId, finalChapterNumber, finalContent, finalAuthorId, finalSummary;
+    
+    if (typeof idOrObj === 'object' && idOrObj !== null) {
+      // 对象参数方式
+      id = idOrObj.id;
+      finalStoryId = idOrObj.storyId;
+      finalChapterNumber = idOrObj.chapterNumber;
+      finalContent = idOrObj.content;
+      finalAuthorId = idOrObj.authorId;
+      finalSummary = idOrObj.summary || null;
+    } else {
+      // 位置参数方式
+      id = idOrObj;
+      finalStoryId = storyId;
+      finalChapterNumber = chapterNumber;
+      finalContent = content;
+      finalAuthorId = authorId;
+      finalSummary = summary;
+    }
+    
+    // 验证必要参数
+    if (!id || !finalStoryId) {
+      throw new Error(`createChapter: 缺少必要参数 id=${id}, storyId=${finalStoryId}`);
+    }
+    
     await this.db.run(
       'INSERT INTO chapters (id, story_id, chapter_number, content, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [id, storyId, chapterNumber, content, summary, authorId]
+      [id, finalStoryId, finalChapterNumber, finalContent, finalSummary, finalAuthorId]
     );
   }
   
