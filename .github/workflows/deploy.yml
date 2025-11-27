@@ -68,11 +68,20 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       
+      - name: Set image name
+        id: image
+        run: |
+          if [ -n "${{ secrets.DOCKER_USERNAME }}" ]; then
+            echo "image=${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}" >> $GITHUB_OUTPUT
+          else
+            echo "image=${{ env.DOCKER_IMAGE }}" >> $GITHUB_OUTPUT
+          fi
+      
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: ${{ secrets.DOCKER_USERNAME != '' && format('{0}/{1}', secrets.DOCKER_USERNAME, env.DOCKER_IMAGE) || env.DOCKER_IMAGE }}
+          images: ${{ steps.image.outputs.image }}
           tags: |
             type=ref,event=branch
             type=sha,prefix={{branch}}-
