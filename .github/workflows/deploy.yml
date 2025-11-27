@@ -139,68 +139,55 @@ jobs:
           # 先检查是否有前端变更
           FRONTEND_CHANGED=$(echo "$CHANGED_FILES" | grep -E "^frontend/" || true)
           
-          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << ENDSSH
-            cd ~/storyweaver
-            
-            echo "=========================================="
-            echo "代码已通过rsync同步到服务器"
-            echo "=========================================="
-            
-            # 验证代码已同步到服务器
-            echo "验证服务器上的代码时间戳..."
-            ls -lth backend/server.js | head -1
-            
-            # 检查是否有前端代码更新
-            FRONTEND_CHANGED="$FRONTEND_CHANGED"
-            if [ -n "\$FRONTEND_CHANGED" ]; then
-              echo "检测到前端代码更新，重新构建前端静态文件..."
-              # 强制重新构建static-init镜像（确保使用最新代码）
-              docker compose build --no-cache static-init || true
-              # 运行static-init重新构建前端
-              docker compose run --rm static-init || true
-              echo "前端静态文件构建完成，重启nginx..."
-              docker compose restart nginx
-            else
-              echo "未检测到前端代码更新，跳过前端构建"
-            fi
-            
-            echo "=========================================="
-            echo "重启服务以加载新代码..."
-            echo "=========================================="
-            
-            # 简化部署流程：直接使用 docker compose up -d 启动所有服务
-            # 这会自动处理依赖关系和健康检查
-            docker compose up -d
-            
-            echo "等待服务启动..."
-            sleep 15
-            
-            echo "检查服务状态..."
+          # 创建部署脚本
+          cat > /tmp/deploy.sh << 'SCRIPT'
+          cd ~/storyweaver
+          
+          echo "=========================================="
+          echo "代码已通过rsync同步到服务器"
+          echo "=========================================="
+          
+          # 验证代码已同步到服务器
+          echo "验证服务器上的代码时间戳..."
+          ls -lth backend/server.js | head -1
+          
+          echo "=========================================="
+          echo "重启服务以加载新代码..."
+          echo "=========================================="
+          
+          # 启动所有服务
+          docker compose up -d
+          
+          echo "等待服务启动..."
+          sleep 20
+          
+          echo "检查服务状态..."
+          docker compose ps
+          
+          # 验证 nginx 正在运行
+          if ! docker compose ps nginx | grep -q "Up"; then
+            echo "nginx 未运行，尝试重新启动..."
+            docker compose up -d nginx
+            sleep 10
             docker compose ps
-            
-            # 确保所有服务都在运行
-            NGINX_RUNNING=$(docker compose ps nginx --format json 2>/dev/null | grep -c "running" || echo "0")
-            if [ "$NGINX_RUNNING" = "0" ]; then
-              echo "nginx 未运行，尝试重新启动..."
-              docker compose up -d nginx
-              sleep 5
-            fi
-            
-            echo "=========================================="
-            echo "验证容器内代码已更新..."
-            echo "=========================================="
-            # 验证容器内的代码是否和服务器上的一致
-            echo "服务器上的代码时间戳:"
-            ls -lth backend/server.js | head -1
-            echo "容器内的代码时间戳:"
-            docker compose exec storyweaver-app ls -lth /app/backend/server.js | head -1
-            
-            # 对比文件内容的MD5
-            echo "服务器上代码MD5:"
-            md5sum backend/server.js || md5 backend/server.js
-            echo "容器内代码MD5:"
-            docker compose exec storyweaver-app md5sum /app/backend/server.js || docker compose exec storyweaver-app md5 /app/backend/server.js
-          ENDSSH
+          fi
+          
+          echo "=========================================="
+          echo "验证容器内代码已更新..."
+          echo "=========================================="
+          echo "服务器上的代码时间戳:"
+          ls -lth backend/server.js | head -1
+          echo "容器内的代码时间戳:"
+          docker compose exec -T storyweaver-app ls -lth /app/backend/server.js | head -1 || true
+          
+          # 最终健康检查
+          echo "内部健康检查..."
+          curl -s http://localhost/health || echo "健康检查失败"
+          SCRIPT
+          
+          # 上传并执行脚本
+          scp -o StrictHostKeyChecking=no /tmp/deploy.sh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/tmp/deploy.sh
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "bash /tmp/deploy.sh"
       
       - name: Health check
         run: |
