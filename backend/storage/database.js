@@ -639,17 +639,38 @@ class Database {
 
   async deleteStory(id) {
     if (!id) return;
-    await this.db.run('DELETE FROM chapter_todos WHERE story_id = ?', [id]);
-    await this.db.run(
-      `DELETE FROM player_feedback_progress 
-       WHERE chapter_id IN (SELECT id FROM chapters WHERE story_id = ?)`,
-      [id]
-    );
-    await this.db.run('DELETE FROM messages WHERE story_id = ?', [id]);
-    await this.db.run('DELETE FROM interactions WHERE story_id = ?', [id]);
-    await this.db.run('DELETE FROM memories WHERE story_id = ?', [id]);
-    await this.db.run('DELETE FROM chapters WHERE story_id = ?', [id]);
-    await this.db.run('DELETE FROM stories WHERE id = ?', [id]);
+    try {
+      await this.db.run(
+        `DELETE FROM player_puzzle_progress 
+         WHERE puzzle_id IN (SELECT id FROM chapter_puzzles WHERE story_id = ?)`,
+        [id]
+      );
+      await this.db.run(
+        `DELETE FROM player_feedback_progress 
+         WHERE chapter_id IN (SELECT id FROM chapters WHERE story_id = ?)`,
+        [id]
+      );
+      await this.db.run(
+        'DELETE FROM player_clues WHERE chapter_id IN (SELECT id FROM chapters WHERE story_id = ?)',
+        [id]
+      );
+      await this.db.run('DELETE FROM player_tasks WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM player_interactions WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM character_clue_cards WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM player_roles WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM story_characters WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM chapter_puzzles WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM chapter_todos WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM story_outlines WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM messages WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM interactions WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM memories WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM chapters WHERE story_id = ?', [id]);
+      await this.db.run('DELETE FROM stories WHERE id = ?', [id]);
+    } catch (error) {
+      console.error(`删除故事 ${id} 失败:`, error);
+      throw error;
+    }
   }
   
   // 章节相关操作
