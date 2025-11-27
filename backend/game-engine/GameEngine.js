@@ -505,7 +505,7 @@ class GameEngine {
       chapterNumber: 1,
       content: fullContent,
       summary: firstScriptChapter.chapterGoal,
-      authorId: 'system'
+      authorId: null  // 系统生成的章节不关联玩家
     });
     
     // 更新故事的章节
@@ -515,7 +515,7 @@ class GameEngine {
       chapterNumber: 1,
       content: fullContent,
       summary: firstScriptChapter.chapterGoal,
-      authorId: 'system',
+      authorId: null,  // 系统生成的章节不关联玩家
       createdAt: new Date().toISOString()
     });
     

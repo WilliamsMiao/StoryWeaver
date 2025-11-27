@@ -316,7 +316,7 @@ export class ChapterTransition {
       startTime: new Date(),
       endTime: null,
       wordCount: chapterContent.length,
-      authorId: 'system',
+      authorId: null,  // 系统生成的章节不关联玩家
       authorName: '系统',
       status: 'active'
     };
@@ -327,7 +327,7 @@ export class ChapterTransition {
       story.id,
       chapterNumber,
       chapterContent,
-      'system',
+      null,  // 系统生成的章节不关联玩家
       null
     );
     

@@ -113,62 +113,73 @@ export default function SkillPanel() {
   }
 
   return (
-    <div className="bg-slate-800 rounded-lg p-4 mt-4">
-      <h3 className="text-lg font-bold text-amber-400 mb-3 flex items-center">
-        <span className="mr-2">⚡</span>
+    <div className="bg-pixel-panel border-4 border-pixel-wood-dark p-4 mt-4 shadow-pixel relative">
+      {/* 装饰性边角 */}
+      <div className="absolute top-2 left-2 right-2 bottom-2 border-2 border-pixel-wood opacity-30 pointer-events-none"></div>
+      
+      <h3 className="text-xl font-bold text-pixel-wood-dark mb-4 flex items-center font-pixel tracking-wide">
+        <span className="mr-2 text-2xl">⚡</span>
         角色技能
       </h3>
       
       {/* 技能列表 */}
-      <div className="space-y-3">
+      <div className="space-y-4 relative z-10">
         {skills.map(skill => (
           <div 
             key={skill.id}
-            className={`bg-slate-700 rounded-lg p-3 ${skill.canUse ? 'hover:bg-slate-600 cursor-pointer' : 'opacity-60'}`}
+            className={`bg-pixel-bg/10 border-2 border-pixel-wood-dark p-3 transition-all transform ${
+              skill.canUse 
+                ? 'hover:bg-pixel-wood-light/20 hover:-translate-y-1 cursor-pointer shadow-pixel-sm' 
+                : 'opacity-60 grayscale'
+            }`}
             onClick={() => handleUseSkill(skill)}
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center">
-                <span className="text-2xl mr-3">{getSkillIcon(skill.type)}</span>
+                <span className="text-3xl mr-3 filter drop-shadow-sm">{getSkillIcon(skill.type)}</span>
                 <div>
-                  <h4 className="font-bold text-white">{skill.name}</h4>
-                  <p className="text-xs text-gray-400">{getSkillTypeName(skill.type)}</p>
+                  <h4 className="font-bold text-pixel-wood-dark text-lg font-pixel">{skill.name}</h4>
+                  <p className="text-sm text-pixel-text-muted font-pixel">{getSkillTypeName(skill.type)}</p>
                 </div>
               </div>
-              <div className="text-right">
-                <span className={`text-sm ${skill.canUse ? 'text-green-400' : 'text-gray-500'}`}>
+              <div className="text-right font-pixel">
+                <span className={`text-lg ${skill.canUse ? 'text-pixel-accent-green' : 'text-pixel-text-muted'}`}>
                   {skill.remainingUses}/{skill.maxUses}
                 </span>
                 {!skill.isAvailable && skill.remainingUses > 0 && (
-                  <p className="text-xs text-yellow-500">冷却中</p>
+                  <p className="text-sm text-pixel-accent-yellow">冷却中</p>
                 )}
               </div>
             </div>
-            <p className="text-sm text-gray-300 mt-2">{skill.description}</p>
+            <p className="text-base text-pixel-text mt-2 font-pixel leading-tight border-t border-pixel-wood/30 pt-2">{skill.description}</p>
           </div>
         ))}
       </div>
 
       {/* 技能结果显示 */}
       {skillResult && (
-        <div className={`mt-4 p-3 rounded-lg ${skillResult.success ? 'bg-green-900/50' : 'bg-red-900/50'}`}>
-          <h4 className={`font-bold ${skillResult.success ? 'text-green-400' : 'text-red-400'}`}>
+        <div className={`mt-4 p-3 border-2 font-pixel text-lg relative z-10 ${
+          skillResult.success 
+            ? 'bg-pixel-accent-green/20 border-pixel-accent-green text-pixel-wood-dark' 
+            : 'bg-pixel-accent-red/20 border-pixel-accent-red text-pixel-accent-red'
+        }`}>
+          <h4 className="font-bold">
             {skillResult.success ? `✅ ${skillResult.skillName} 发动成功！` : '❌ 技能使用失败'}
           </h4>
-          <p className="text-gray-200 mt-1">{skillResult.message}</p>
+          <p className="mt-1">{skillResult.message}</p>
         </div>
       )}
 
       {/* 目标选择模态框 */}
       {showTargetModal && selectedSkill && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <div className="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-bold text-amber-400 mb-4">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 font-pixel">
+          <div className="bg-pixel-panel border-4 border-pixel-wood-dark p-6 max-w-md w-full mx-4 shadow-pixel relative">
+            <h3 className="text-2xl font-bold text-pixel-wood-dark mb-4 border-b-2 border-pixel-wood-dark pb-2">
               选择目标 - {selectedSkill.name}
             </h3>
-            <p className="text-gray-300 mb-4">{selectedSkill.description}</p>
+            <p className="text-pixel-text mb-4 text-lg">{selectedSkill.description}</p>
             
-            <div className="space-y-2 max-h-60 overflow-y-auto">
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
               {room?.players?.filter(p => p.id !== myCharacter?.playerId).map(player => (
                 <button
                   key={player.id}
@@ -176,11 +187,11 @@ export default function SkillPanel() {
                     setTargetCharacter(player.characterId);
                     executeSkill(selectedSkill.id, player.characterId);
                   }}
-                  className="w-full text-left p-3 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+                  className="w-full text-left p-3 bg-pixel-bg/5 hover:bg-pixel-wood-light/30 border-2 border-transparent hover:border-pixel-wood-dark transition-all"
                 >
-                  <span className="font-bold text-white">{player.characterName || player.username}</span>
+                  <span className="font-bold text-pixel-wood-dark text-xl">{player.characterName || player.username}</span>
                   {player.occupation && (
-                    <span className="text-gray-400 ml-2">({player.occupation})</span>
+                    <span className="text-pixel-text-muted ml-2 text-lg">({player.occupation})</span>
                   )}
                 </button>
               ))}
@@ -191,7 +202,7 @@ export default function SkillPanel() {
                 setShowTargetModal(false);
                 setSelectedSkill(null);
               }}
-              className="mt-4 w-full py-2 bg-gray-600 hover:bg-gray-500 rounded-lg text-white"
+              className="mt-6 w-full py-2 bg-pixel-wood hover:bg-pixel-wood-light text-white border-2 border-pixel-wood-dark shadow-pixel active:translate-y-1 active:shadow-none transition-all text-xl"
             >
               取消
             </button>
@@ -201,10 +212,10 @@ export default function SkillPanel() {
 
       {/* 加载状态 */}
       {loading && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-slate-800 rounded-lg p-6 flex items-center">
-            <div className="animate-spin w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full mr-3"></div>
-            <span className="text-white">技能发动中...</span>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 font-pixel">
+          <div className="bg-pixel-panel border-4 border-pixel-wood-dark p-6 flex items-center shadow-pixel">
+            <div className="animate-spin w-8 h-8 border-4 border-pixel-wood-dark border-t-transparent rounded-full mr-4"></div>
+            <span className="text-pixel-wood-dark text-xl font-bold">技能发动中...</span>
           </div>
         </div>
       )}

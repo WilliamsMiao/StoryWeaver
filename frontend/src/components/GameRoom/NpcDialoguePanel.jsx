@@ -129,55 +129,58 @@ export default function NpcDialoguePanel() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-slate-900/50">
+    <div className="h-full flex flex-col bg-pixel-panel border-2 border-pixel-wood-dark font-pixel relative">
+      {/* 装饰性边角 */}
+      <div className="absolute top-1 left-1 right-1 bottom-1 border border-pixel-wood opacity-30 pointer-events-none"></div>
+
       {/* NPC列表 */}
-      <div className="flex-shrink-0 p-3 border-b border-slate-700">
-        <h3 className="text-xs text-gray-400 uppercase mb-2">选择角色对话</h3>
-        <div className="space-y-1 max-h-32 overflow-y-auto">
+      <div className="flex-shrink-0 p-3 border-b-2 border-pixel-wood-dark relative z-10">
+        <h3 className="text-lg text-pixel-wood-dark font-bold uppercase mb-2 flex items-center">
+          <span className="mr-2">👥</span> 选择角色对话
+        </h3>
+        <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar pr-1">
           {npcList.map(npc => (
             <button
               key={npc.id}
               onClick={() => setSelectedNpc(npc)}
-              className={`w-full text-left p-2 rounded text-sm transition-colors
+              className={`w-full text-left p-2 border-2 transition-all transform active:scale-95
                 ${selectedNpc?.id === npc.id 
-                  ? 'bg-indigo-600 text-white' 
-                  : 'hover:bg-slate-700 text-gray-300 bg-slate-800'}`}
+                  ? 'bg-pixel-wood text-white border-pixel-wood-dark shadow-pixel-sm' 
+                  : 'bg-pixel-bg/20 hover:bg-pixel-wood-light/30 text-pixel-wood-dark border-transparent hover:border-pixel-wood-dark'}`}
             >
-              <div className="font-bold truncate">{npc.name}</div>
+              <div className="font-bold truncate text-lg">{npc.name}</div>
               {npc.occupation && (
-                <div className="text-xs opacity-70 truncate">{npc.occupation}</div>
+                <div className="text-sm opacity-80 truncate">{npc.occupation}</div>
               )}
             </button>
           ))}
           {npcList.length === 0 && (
-            <p className="text-gray-500 text-sm text-center py-2">暂无可对话角色</p>
+            <p className="text-pixel-text-muted text-lg text-center py-2 italic">暂无可对话角色</p>
           )}
         </div>
       </div>
 
       {/* 对话区域 */}
       {selectedNpc ? (
-        <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 flex flex-col min-h-0 relative z-10">
           {/* 对话头部 */}
-          <div className="p-2 border-b border-slate-700 bg-slate-800/30">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-white text-sm">{selectedNpc.name}</span>
-              <label className="flex items-center text-xs">
-                <input
-                  type="checkbox"
-                  checked={isPrivate}
-                  onChange={(e) => setIsPrivate(e.target.checked)}
-                  className="mr-1 w-3 h-3"
-                />
-                <span className={isPrivate ? 'text-amber-400' : 'text-gray-400'}>
-                  🔒 私密
-                </span>
-              </label>
-            </div>
+          <div className="p-2 border-b-2 border-pixel-wood-dark bg-pixel-bg/10 flex items-center justify-between">
+            <span className="font-bold text-pixel-wood-dark text-lg">{selectedNpc.name}</span>
+            <label className="flex items-center text-sm cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={isPrivate}
+                onChange={(e) => setIsPrivate(e.target.checked)}
+                className="mr-1 w-4 h-4 accent-pixel-wood-dark"
+              />
+              <span className={`font-bold ${isPrivate ? 'text-pixel-accent-red' : 'text-pixel-text-muted'}`}>
+                {isPrivate ? '🔒 私密' : '🔓 公开'}
+              </span>
+            </label>
           </div>
 
           {/* 对话历史 */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-2">
+          <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar bg-pixel-bg/5">
             {dialogueHistory
               .filter(d => !d.npcName || d.npcName === selectedNpc.name)
               .map((dialogue, index) => (
@@ -186,29 +189,29 @@ export default function NpcDialoguePanel() {
                   ${dialogue.type === 'public' ? 'opacity-70' : ''}
                 `}>
                   {dialogue.type === 'player' && (
-                    <div className="inline-block bg-indigo-600 text-white rounded-lg px-3 py-1.5 max-w-[85%] text-sm">
+                    <div className="inline-block bg-pixel-wood text-white border-2 border-pixel-wood-dark px-3 py-2 max-w-[90%] text-lg shadow-sm text-left">
                       <p>{dialogue.message}</p>
                       {dialogue.isPrivate && (
-                        <span className="text-xs opacity-70">🔒</span>
+                        <span className="text-xs opacity-70 block mt-1 border-t border-white/30 pt-1">🔒 私密发送</span>
                       )}
                     </div>
                   )}
                   {dialogue.type === 'npc' && (
-                    <div className="inline-block bg-slate-700 text-gray-100 rounded-lg px-3 py-1.5 max-w-[85%] text-sm">
-                      <div className="flex items-center mb-1 text-xs">
-                        <span className="font-bold text-amber-400">{dialogue.npcName}</span>
-                        <span className="ml-1">{getEmotionIcon(dialogue.emotionalTone)}</span>
+                    <div className="inline-block bg-white text-pixel-wood-dark border-2 border-pixel-wood-dark px-3 py-2 max-w-[90%] text-lg shadow-sm text-left">
+                      <div className="flex items-center mb-1 text-sm border-b border-pixel-wood-dark/20 pb-1">
+                        <span className="font-bold text-pixel-wood-dark">{dialogue.npcName}</span>
+                        <span className="ml-2 text-xl">{getEmotionIcon(dialogue.emotionalTone)}</span>
                       </div>
                       <p>{dialogue.response}</p>
                       {dialogue.revealedInfo?.length > 0 && (
-                        <div className="mt-1 text-xs text-green-400 border-t border-slate-600 pt-1">
+                        <div className="mt-2 text-sm text-pixel-accent-green font-bold border-t border-pixel-wood-dark/20 pt-1">
                           💡 {dialogue.revealedInfo.join(', ')}
                         </div>
                       )}
                     </div>
                   )}
                   {dialogue.type === 'error' && (
-                    <div className="bg-red-900/30 text-red-400 rounded-lg px-3 py-1.5 text-center text-xs">
+                    <div className="bg-pixel-accent-red/20 border-2 border-pixel-accent-red text-pixel-accent-red px-3 py-2 text-center text-sm font-bold">
                       {dialogue.message}
                     </div>
                   )}
@@ -218,32 +221,32 @@ export default function NpcDialoguePanel() {
           </div>
 
           {/* 输入区 */}
-          <div className="p-2 border-t border-slate-700">
-            <div className="flex gap-1">
+          <div className="p-2 border-t-2 border-pixel-wood-dark bg-pixel-panel">
+            <div className="flex gap-2">
               <input
                 type="text"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                placeholder={`说...`}
-                className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                placeholder={`与 ${selectedNpc.name} 对话...`}
+                className="flex-1 bg-white border-2 border-pixel-wood-dark px-3 py-2 text-pixel-wood-dark text-lg placeholder-pixel-text-muted focus:outline-none focus:border-pixel-accent-yellow font-pixel"
                 disabled={loading}
               />
               <button
                 onClick={handleSendMessage}
                 disabled={!message.trim() || loading}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded text-sm transition-colors"
+                className="px-4 py-2 bg-pixel-wood hover:bg-pixel-wood-light disabled:bg-gray-400 disabled:cursor-not-allowed text-white border-2 border-pixel-wood-dark shadow-pixel active:translate-y-1 active:shadow-none transition-all font-bold text-xl"
               >
-                {loading ? '⏳' : '→'}
+                {loading ? '⏳' : '发送'}
               </button>
             </div>
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center text-gray-500 p-4">
-          <div className="text-center text-sm">
-            <span className="text-2xl mb-2 block">👆</span>
-            <p>选择角色开始对话</p>
+        <div className="flex-1 flex items-center justify-center text-pixel-text-muted p-4 relative z-10">
+          <div className="text-center">
+            <span className="text-4xl mb-4 block animate-bounce">👆</span>
+            <p className="text-xl">请选择角色开始对话</p>
           </div>
         </div>
       )}
