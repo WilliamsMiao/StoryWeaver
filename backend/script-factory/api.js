@@ -146,10 +146,20 @@ router.get('/', async (req, res) => {
   try {
     const { status, theme, published, limit, offset } = req.query;
     
+    // 如果status=published，使用isPublished=true
+    let isPublished;
+    if (status === 'published') {
+      isPublished = true;
+    } else if (published === 'true') {
+      isPublished = true;
+    } else if (published === 'false') {
+      isPublished = false;
+    }
+    
     const scripts = await scriptDatabase.getScripts({
-      status,
+      status: status !== 'published' ? status : undefined, // 如果status=published，不传status参数
       theme,
-      isPublished: published === 'true' ? true : published === 'false' ? false : undefined,
+      isPublished,
       limit: parseInt(limit) || 50,
       offset: parseInt(offset) || 0
     });
