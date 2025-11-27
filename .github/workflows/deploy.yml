@@ -165,22 +165,26 @@ jobs:
             fi
             
             echo "=========================================="
-            echo "强制重启容器以加载新代码..."
+            echo "重启服务以加载新代码..."
             echo "=========================================="
             
-            # 关键修复：先停止容器，再启动，确保使用最新的挂载代码
-            docker compose stop storyweaver-app
-            docker compose up -d storyweaver-app
-            
-            # 确保 nginx 也在运行
-            echo "确保 nginx 运行中..."
-            docker compose up -d nginx
+            # 简化部署流程：直接使用 docker compose up -d 启动所有服务
+            # 这会自动处理依赖关系和健康检查
+            docker compose up -d
             
             echo "等待服务启动..."
-            sleep 10
+            sleep 15
             
             echo "检查服务状态..."
             docker compose ps
+            
+            # 确保所有服务都在运行
+            NGINX_RUNNING=$(docker compose ps nginx --format json 2>/dev/null | grep -c "running" || echo "0")
+            if [ "$NGINX_RUNNING" = "0" ]; then
+              echo "nginx 未运行，尝试重新启动..."
+              docker compose up -d nginx
+              sleep 5
+            fi
             
             echo "=========================================="
             echo "验证容器内代码已更新..."
@@ -200,8 +204,19 @@ jobs:
       
       - name: Health check
         run: |
-          sleep 5
-          curl -f http://${{ env.SERVER_HOST }}/health || exit 1
+          echo "等待服务完全启动..."
+          sleep 15
+          for i in {1..15}; do
+            if curl -f http://${{ env.SERVER_HOST }}/health 2>/dev/null; then
+              echo ""
+              echo "健康检查通过"
+              exit 0
+            fi
+            echo "等待服务启动... ($i/15)"
+            sleep 5
+          done
+          echo "健康检查失败，尝试查看服务状态..."
+          exit 1
 
   deploy-docker:
     needs: [detect-changes, build-docker]
