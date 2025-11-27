@@ -172,6 +172,10 @@ jobs:
             docker compose stop storyweaver-app
             docker compose up -d storyweaver-app
             
+            # 确保 nginx 也在运行
+            echo "确保 nginx 运行中..."
+            docker compose up -d nginx
+            
             echo "等待服务启动..."
             sleep 10
             
