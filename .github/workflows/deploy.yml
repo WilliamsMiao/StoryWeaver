@@ -241,30 +241,45 @@ jobs:
             echo "开始 Docker 重新构建和部署"
             echo "=========================================="
             
-            # 如果使用Docker Hub，拉取最新镜像
-            # if [ -n "${{ secrets.DOCKER_USERNAME }}" ]; then
-            #   docker compose pull storyweaver-app || true
-            # fi
+            # 停止所有服务
+            echo "停止所有服务..."
+            docker compose down || true
             
-            # 先停止现有容器
-            docker compose down storyweaver-app || true
+            # 清理旧的镜像（可选，释放空间）
+            docker image prune -f || true
             
-            # 清理旧的镜像缓存，确保使用最新代码重新构建
+            # 重新构建后端应用
+            echo "重新构建后端应用..."
             docker compose build --no-cache storyweaver-app
             
-            # 同时重新构建前端静态文件
+            # 重新构建前端静态文件
             echo "重新构建前端静态文件..."
             docker compose build --no-cache static-init || true
+            
+            # 先启动后端服务
+            echo "启动后端服务..."
+            docker compose up -d storyweaver-app
+            
+            # 等待后端服务健康
+            echo "等待后端服务启动..."
+            sleep 20
+            
+            # 检查后端服务状态
+            echo "检查后端服务日志..."
+            docker compose logs storyweaver-app --tail 30
+            
+            # 构建前端静态文件
+            echo "构建前端静态文件..."
             docker compose run --rm static-init || true
             
-            # 启动所有服务
-            docker compose up -d
+            # 启动 nginx
+            echo "启动 nginx..."
+            docker compose up -d nginx
             
-            # 等待服务启动
-            echo "等待服务启动..."
-            sleep 15
+            # 最终等待
+            sleep 10
             
-            echo "检查服务状态..."
+            echo "检查所有服务状态..."
             docker compose ps
             
             echo "=========================================="
@@ -273,7 +288,11 @@ jobs:
             echo "服务器上的代码时间戳:"
             ls -lth backend/server.js | head -1
             echo "容器内的代码时间戳:"
-            docker compose exec storyweaver-app ls -lth /app/backend/server.js | head -1
+            docker compose exec storyweaver-app ls -lth /app/backend/server.js | head -1 || true
+            
+            # 内部健康检查
+            echo "内部健康检查..."
+            docker compose exec storyweaver-app wget -qO- http://localhost:3000/health || echo "内部健康检查失败"
           ENDSSH
       
       - name: Health check
