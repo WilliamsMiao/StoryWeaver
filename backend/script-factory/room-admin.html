@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>房间管理后台 - StoryWeaver</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Noto Sans SC', sans-serif; }
+    .gradient-bg { background: linear-gradient(135deg, #1e3a5f 0%, #2d1b4e 100%); }
+    .card { backdrop-filter: blur(10px); background: rgba(255,255,255,0.1); }
+    .btn-danger { background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); }
+    .btn-danger:hover { background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); }
+  </style>
+</head>
+<body class="gradient-bg min-h-screen text-white">
+  <div class="container mx-auto px-4 py-8">
+    <header class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-3xl font-bold text-purple-400">🎮 房间管理后台</h1>
+        <p class="text-gray-400 mt-1">管理当前活跃的游戏房间</p>
+      </div>
+      <div class="flex gap-4">
+        <a href="/portal" class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition">返回门户</a>
+        <button onclick="logout()" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 transition">退出登录</button>
+      </div>
+    </header>
+
+    <!-- 登录模态框 -->
+    <div id="login-modal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+      <div class="bg-gray-800 p-8 rounded-xl border border-gray-700 w-96">
+        <h2 class="text-2xl font-bold mb-4 text-center">管理员验证</h2>
+        <input type="password" id="password-input" placeholder="请输入管理密码" 
+          class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 mb-4 text-white focus:outline-none focus:border-purple-500">
+        <button onclick="login()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg transition">
+          验证
+        </button>
+        <p id="login-error" class="text-red-400 text-sm mt-2 hidden">密码错误</p>
+      </div>
+    </div>
+
+    <!-- 房间列表 -->
+    <div id="main-content" class="hidden">
+      <div class="flex justify-between items-center mb-6">
+        <div class="text-xl">当前活跃房间: <span id="room-count" class="font-bold text-purple-400">0</span></div>
+        <button onclick="loadRooms()" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 transition flex items-center gap-2">
+          <span>🔄</span> 刷新列表
+        </button>
+      </div>
+
+      <div id="rooms-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- 房间卡片将在这里生成 -->
+        <div class="col-span-full text-center py-12 text-gray-500">
+          加载中...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 配置
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const API_BASE = isLocalhost 
+      ? 'http://localhost:3000/api/admin' 
+      : `${window.location.origin}/api/admin`;
+    
+    let adminPassword = localStorage.getItem('admin_password');
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', () => {
+      if (adminPassword) {
+        verifyPassword(adminPassword);
+      } else {
+        document.getElementById('login-modal').classList.remove('hidden');
+      }
+      
+      // 绑定回车键登录
+      document.getElementById('password-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') login();
+      });
+    });
+
+    function login() {
+      const password = document.getElementById('password-input').value;
+      verifyPassword(password);
+    }
+
+    function logout() {
+      localStorage.removeItem('admin_password');
+      location.reload();
+    }
+
+    async function verifyPassword(password) {
+      // 简单验证：尝试获取房间列表
+      try {
+        const res = await fetch(`${API_BASE}/rooms`, {
+          headers: { 'x-admin-password': password }
+        });
+        
+        if (res.ok) {
+          adminPassword = password;
+          localStorage.setItem('admin_password', password);
+          document.getElementById('login-modal').classList.add('hidden');
+          document.getElementById('main-content').classList.remove('hidden');
+          loadRooms();
+        } else {
+          document.getElementById('login-error').classList.remove('hidden');
+          if (adminPassword) { // 如果是自动登录失败
+            localStorage.removeItem('admin_password');
+            document.getElementById('login-modal').classList.remove('hidden');
+            document.getElementById('main-content').classList.add('hidden');
+          }
+        }
+      } catch (error) {
+        console.error('验证失败:', error);
+        alert('连接服务器失败');
+      }
+    }
+
+    async function loadRooms() {
+      try {
+        const res = await fetch(`${API_BASE}/rooms`, {
+          headers: { 'x-admin-password': adminPassword }
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+          renderRooms(data.rooms);
+        }
+      } catch (error) {
+        console.error('加载房间失败:', error);
+      }
+    }
+
+    function renderRooms(rooms) {
+      const container = document.getElementById('rooms-grid');
+      document.getElementById('room-count').textContent = rooms.length;
+      
+      if (rooms.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full text-center py-12 bg-gray-800/30 rounded-xl border border-gray-700 border-dashed">
+            <p class="text-gray-400 text-lg">当前没有活跃的房间</p>
+          </div>
+        `;
+        return;
+      }
+      
+      container.innerHTML = rooms.map(room => `
+        <div class="card rounded-xl p-6 border border-gray-700 hover:border-purple-500 transition relative group">
+          <div class="flex justify-between items-start mb-4">
+            <div>
+              <h3 class="text-xl font-bold text-white">${escapeHtml(room.name)}</h3>
+              <p class="text-sm text-gray-400 font-mono">ID: ${room.id}</p>
+            </div>
+            <span class="px-2 py-1 rounded text-xs font-bold ${getStatusColor(room.status)}">
+              ${getStatusText(room.status)}
+            </span>
+          </div>
+          
+          <div class="space-y-2 mb-6">
+            <div class="flex justify-between text-sm">
+              <span class="text-gray-400">房主ID:</span>
+              <span class="text-gray-300 font-mono">${room.hostId}</span>
+            </div>
+            <div class="flex justify-between text-sm">
+              <span class="text-gray-400">玩家人数:</span>
+              <span class="text-gray-300">${room.playerCount}人</span>
+            </div>
+            <div class="flex justify-between text-sm">
+              <span class="text-gray-400">创建时间:</span>
+              <span class="text-gray-300">${new Date(room.createdAt).toLocaleTimeString()}</span>
+            </div>
+          </div>
+          
+          <button onclick="deleteRoom('${room.id}')" 
+            class="w-full btn-danger py-2 rounded-lg text-white font-bold text-sm opacity-90 hover:opacity-100 transition">
+            强制关闭房间
+          </button>
+        </div>
+      `).join('');
+    }
+
+    async function deleteRoom(roomId) {
+      if (!confirm('确定要强制关闭这个房间吗？所有玩家将被断开连接。')) {
+        return;
+      }
+      
+      try {
+        const res = await fetch(`${API_BASE}/rooms/${roomId}`, {
+          method: 'DELETE',
+          headers: { 'x-admin-password': adminPassword }
+        });
+        
+        if (res.ok) {
+          loadRooms(); // 刷新列表
+        } else {
+          alert('删除失败');
+        }
+      } catch (error) {
+        console.error('删除失败:', error);
+        alert('操作失败');
+      }
+    }
+
+    function getStatusColor(status) {
+      const map = {
+        'waiting': 'bg-yellow-500/20 text-yellow-400',
+        'playing': 'bg-green-500/20 text-green-400',
+        'finished': 'bg-blue-500/20 text-blue-400'
+      };
+      return map[status] || 'bg-gray-500/20 text-gray-400';
+    }
+
+    function getStatusText(status) {
+      const map = {
+        'waiting': '等待中',
+        'playing': '游戏中',
+        'finished': '已结束'
+      };
+      return map[status] || status;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>

@@ -123,9 +123,64 @@ class StoryWeaverServer {
     // 剧本工厂 API
     this.app.use('/api/scripts', scriptRouter);
     
-    // 剧本工厂管理后台静态页面
+    // 静态文件服务 - 剧本工厂目录
+    this.app.use('/script-factory', express.static(path.join(__dirname, 'script-factory')));
+    
+    // 剧本工厂管理后台静态页面 (保留旧路由以兼容)
     this.app.get('/admin/scripts', (req, res) => {
       res.sendFile(path.join(__dirname, 'script-factory', 'admin.html'));
+    });
+    
+    // 房间管理后台
+    this.app.get('/admin/rooms', (req, res) => {
+      res.sendFile(path.join(__dirname, 'script-factory', 'room-admin.html'));
+    });
+    
+    // 门户页面
+    this.app.get('/portal', (req, res) => {
+      res.sendFile(path.join(__dirname, 'script-factory', 'index.html'));
+    });
+
+    // 管理员验证中间件
+    const adminAuth = (req, res, next) => {
+      const password = req.headers['x-admin-password'] || req.query.password;
+      if (password === '370032') {
+        next();
+      } else {
+        res.status(401).json({ error: 'Unauthorized' });
+      }
+    };
+
+    // 管理 API: 获取房间列表
+    this.app.get('/api/admin/rooms', adminAuth, (req, res) => {
+      const rooms = [];
+      for (const [id, room] of gameEngine.rooms.entries()) {
+        rooms.push({
+          id: room.id,
+          name: room.name,
+          status: room.status,
+          playerCount: room.players.size,
+          hostId: room.hostId,
+          createdAt: room.createdAt || Date.now()
+        });
+      }
+      res.json({ success: true, rooms });
+    });
+
+    // 管理 API: 删除房间
+    this.app.delete('/api/admin/rooms/:roomId', adminAuth, (req, res) => {
+      const { roomId } = req.params;
+      if (gameEngine.rooms.has(roomId)) {
+        const room = gameEngine.rooms.get(roomId);
+        // 通知房间内所有玩家
+        this.io.to(roomId).emit('error', { message: '房间已被管理员关闭' });
+        this.io.in(roomId).disconnectSockets();
+        
+        gameEngine.rooms.delete(roomId);
+        res.json({ success: true });
+      } else {
+        res.status(404).json({ error: 'Room not found' });
+      }
     });
     
     // API路由 - 使用asyncHandler包装异步函数
