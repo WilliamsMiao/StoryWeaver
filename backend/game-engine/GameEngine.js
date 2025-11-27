@@ -482,10 +482,12 @@ class GameEngine {
 
 请用第二人称"你们"的视角，生成一段150-250字的开场白，营造悬疑氛围，不要透露凶手身份。`;
 
-      const response = await AIService.chat([
+      const messages = [
         { role: 'system', content: '你是一个专业的剧本杀主持人，擅长营造悬疑氛围。' },
         { role: 'user', content: prompt }
-      ], { temperature: 0.7, max_tokens: 400 });
+      ];
+      
+      const response = await AIService.provider.callAPI(messages, { temperature: 0.7, max_tokens: 400 });
       
       enhancedContent = response.content || firstScriptChapter.openingNarration;
     } catch (error) {
