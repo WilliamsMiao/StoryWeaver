@@ -72,7 +72,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}
+          images: ${{ secrets.DOCKER_USERNAME != '' && format('{0}/{1}', secrets.DOCKER_USERNAME, env.DOCKER_IMAGE) || env.DOCKER_IMAGE }}
           tags: |
             type=ref,event=branch
             type=sha,prefix={{branch}}-
@@ -89,6 +89,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+          load: ${{ secrets.DOCKER_USERNAME == '' }}
 
   deploy-rsync:
     needs: detect-changes
