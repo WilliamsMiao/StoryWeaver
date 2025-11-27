@@ -22,15 +22,14 @@ DOCKER_BUILD_PATTERNS=(
     "frontend/tailwind.config.js"
     "frontend/postcss.config.js"
     "backend/package.json"
-    "nginx/nginx.conf"
-    "nginx/conf.d/"
+    "nginx/"
+    ".github/workflows/"
 )
 
 # 仅需代码同步的文件模式（如果只变更这些，不需要Docker构建）
 CODE_SYNC_PATTERNS=(
     "backend/"
     "frontend/src/"
-    "nginx/conf.d/"
 )
 
 echo "检测代码变更..."
