@@ -204,10 +204,13 @@
             <!-- 玩家人数 -->
             <div class="mb-6">
               <label class="block text-lg font-bold mb-3">👥 玩家人数</label>
-              <div class="flex gap-4">
-                <input type="range" id="player-count" min="3" max="8" value="4" 
+              <div class="flex gap-4 items-center">
+                <input type="range" id="player-count" min="1" max="8" value="4" 
                        class="flex-1" oninput="updatePlayerCount(this.value)">
                 <span id="player-count-display" class="text-xl font-bold w-12 text-center">4人</span>
+              </div>
+              <div id="player-count-hint" class="mt-2 text-sm text-gray-400">
+                🎮 经典多人剧本，适合朋友聚会
               </div>
             </div>
             
@@ -601,6 +604,20 @@
     // 更新玩家人数显示
     function updatePlayerCount(value) {
       document.getElementById('player-count-display').textContent = value + '人';
+      
+      // 根据人数显示不同的提示
+      const hints = {
+        1: '🎭 单人剧本，独自探索故事的奥秘',
+        2: '💑 双人剧本，适合情侣或好友对决',
+        3: '🎲 三人剧本，紧凑刺激的推理体验',
+        4: '🎮 经典多人剧本，适合朋友聚会',
+        5: '🏠 中型团队剧本，角色丰富',
+        6: '🎪 大型剧本，复杂的人物关系网',
+        7: '🏰 史诗级剧本，多线索并行',
+        8: '👑 超大型剧本，沉浸式体验'
+      };
+      
+      document.getElementById('player-count-hint').textContent = hints[value] || '';
     }
     
     // 选择难度
