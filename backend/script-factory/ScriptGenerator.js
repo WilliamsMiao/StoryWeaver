@@ -152,12 +152,18 @@ class ScriptGenerator extends EventEmitter {
 
     const scriptId = uuidv4();
     const themeTemplate = THEME_TEMPLATES[theme] || THEME_TEMPLATES.mansion_murder;
+    
+    // ★ 关键：角色数量独立于玩家人数
+    // 单人/双人游戏：玩家扮演侦探，需要 4-6 个 NPC 嫌疑人
+    // 多人游戏：玩家扮演嫌疑人角色
+    const isSoloMode = playerCount <= 2;
+    const characterCount = isSoloMode ? Math.max(4, 3 + difficulty) : Math.max(playerCount, 4);
 
     try {
       // Step 1: 生成基本框架
       console.log('[剧本生成器] Step 1: 生成基本框架...');
       this.emitProgress('step', { step: 1, description: '生成基本框架' });
-      const framework = await this.generateFramework(themeTemplate, playerCount, difficulty, customBackground);
+      const framework = await this.generateFramework(themeTemplate, playerCount, difficulty, customBackground, isSoloMode);
       this.emitProgress('progress', { message: `框架生成完成: ${framework.title}` });
 
       // Step 2: 创建剧本主记录
@@ -169,13 +175,14 @@ class ScriptGenerator extends EventEmitter {
         subtitle: framework.subtitle,
         description: framework.description,
         minPlayers: playerCount,
-        maxPlayers: playerCount + 2,
+        maxPlayers: isSoloMode ? playerCount : playerCount + 2,
         recommendedPlayers: playerCount,
         difficulty: difficulty,
         estimatedDuration: 90 + (difficulty * 15),
         theme: theme,
-        tags: [themeTemplate.name, `${playerCount}人本`, `难度${difficulty}`],
-        author: 'AI剧本工厂'
+        tags: [themeTemplate.name, isSoloMode ? '侦探模式' : `${playerCount}人本`, `难度${difficulty}`],
+        author: 'AI剧本工厂',
+        isSoloMode: isSoloMode // 标记是否为侦探模式
       });
       this.emitProgress('progress', { message: '剧本记录已创建' });
 
@@ -185,10 +192,10 @@ class ScriptGenerator extends EventEmitter {
       const truth = await this.generateTruth(scriptId, framework, themeTemplate);
       this.emitProgress('progress', { message: `真相生成完成: ${truth.victimName}遇害` });
 
-      // Step 4: 生成角色
+      // Step 4: 生成角色（使用 characterCount 而非 playerCount）
       console.log('[剧本生成器] Step 4: 生成角色...');
       this.emitProgress('step', { step: 4, description: '生成角色' });
-      const characters = await this.generateCharacters(scriptId, framework, truth, playerCount);
+      const characters = await this.generateCharacters(scriptId, framework, truth, characterCount, isSoloMode);
       this.emitProgress('progress', { message: `角色生成完成: ${characters.length}个角色` });
 
       // Step 5: 生成人物关系
@@ -316,11 +323,16 @@ class ScriptGenerator extends EventEmitter {
   /**
    * 生成剧本框架
    */
-  async generateFramework(themeTemplate, playerCount, difficulty, customBackground) {
+  async generateFramework(themeTemplate, playerCount, difficulty, customBackground, isSoloMode = false) {
     // 随机选择设定
     const setting = themeTemplate.settings[Math.floor(Math.random() * themeTemplate.settings.length)];
     const victimType = themeTemplate.victimTypes[Math.floor(Math.random() * themeTemplate.victimTypes.length)];
     const motive = themeTemplate.murdererMotives[Math.floor(Math.random() * themeTemplate.murdererMotives.length)];
+    
+    // 侦探模式的描述不同
+    const modeDescription = isSoloMode 
+      ? '作为侦探，你需要调查所有嫌疑人，找出真凶'
+      : `${playerCount}位嫌疑人各有秘密，真相扑朔迷离`;
 
     // 如果有AI，使用AI生成更丰富的内容
     if (this.aiProvider) {
@@ -330,7 +342,7 @@ class ScriptGenerator extends EventEmitter {
 设定：${setting}
 受害者类型：${victimType}
 凶手动机：${motive}
-玩家人数：${playerCount}人
+游戏模式：${isSoloMode ? '侦探模式（玩家扮演侦探调查案件）' : `多人模式（${playerCount}位玩家扮演嫌疑人）`}
 难度：${difficulty}/5
 
 ${customBackground ? `自定义背景：${customBackground}` : ''}
@@ -357,7 +369,9 @@ ${customBackground ? `自定义背景：${customBackground}` : ''}
         
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          return JSON.parse(jsonMatch[0]);
+          const result = JSON.parse(jsonMatch[0]);
+          result.isSoloMode = isSoloMode;
+          return result;
         }
       } catch (error) {
         console.warn('[剧本生成器] AI生成框架失败，使用模板:', error.message);
@@ -369,11 +383,12 @@ ${customBackground ? `自定义背景：${customBackground}` : ''}
     return {
       title: `${setting}疑云`,
       subtitle: `${themeTemplate.name}`,
-      description: `在${setting}中，${victimType}离奇死亡。${playerCount}位嫌疑人各有秘密，真相扑朔迷离。你能找出隐藏在谜团后的凶手吗？`,
+      description: `在${setting}中，${victimType}离奇死亡。${modeDescription}。你能找出隐藏在谜团后的凶手吗？`,
       setting: setting,
       victimType: victimType,
       motive: motive,
-      atmosphere: themeTemplate.atmosphere
+      atmosphere: themeTemplate.atmosphere,
+      isSoloMode: isSoloMode
     };
   }
 
@@ -481,15 +496,20 @@ ${customBackground ? `自定义背景：${customBackground}` : ''}
 
   /**
    * 生成角色
+   * @param {string} scriptId - 剧本ID
+   * @param {object} framework - 剧本框架
+   * @param {object} truth - 案件真相
+   * @param {number} characterCount - 角色数量（不是玩家数量）
+   * @param {boolean} isSoloMode - 是否为侦探模式
    */
-  async generateCharacters(scriptId, framework, truth, playerCount) {
+  async generateCharacters(scriptId, framework, truth, characterCount, isSoloMode = false) {
     const characters = [];
-    const archetypes = this.selectArchetypes(playerCount);
+    const archetypes = this.selectArchetypes(characterCount);
 
     // 随机选择凶手位置
-    const murdererIndex = Math.floor(Math.random() * playerCount);
+    const murdererIndex = Math.floor(Math.random() * characterCount);
 
-    for (let i = 0; i < playerCount; i++) {
+    for (let i = 0; i < characterCount; i++) {
       const archetype = archetypes[i];
       const isMurderer = i === murdererIndex;
       const characterId = isMurderer ? truth.murdererCharacterId : uuidv4();
@@ -498,7 +518,13 @@ ${customBackground ? `自定义背景：${customBackground}` : ''}
 
       if (this.aiProvider) {
         try {
+          const roleContext = isSoloMode 
+            ? '这是一个侦探模式剧本，所有角色都是NPC嫌疑人，玩家扮演侦探来调查他们。'
+            : '这是一个多人剧本，玩家会扮演这些角色。';
+            
           const prompt = `为剧本杀游戏创建一个角色：
+
+${roleContext}
 
 剧本标题：${framework.title}
 场景：${framework.setting}
@@ -515,17 +541,17 @@ ${isMurderer ? `【这是凶手角色】凶手动机：${truth.murderMotive}` : 
   "gender": "性别",
   "age": 年龄数字,
   "occupation": "职业",
-  "publicInfo": "所有玩家可见的公开信息（50-80字）",
+  "publicInfo": "所有人可见的公开信息（50-80字）",
   "publicPersonality": "性格描述",
   "publicBackground": "公开的背景故事",
-  "secretInfo": "只有该玩家知道的秘密（50-100字）",
+  "secretInfo": "角色隐藏的秘密（50-100字）",
   "secretMotive": "隐藏的动机或目的",
   "alibi": "声称的不在场证明",
   "alibiTruth": "不在场证明的真相",
   "personalGoal": "个人目标"
 }`;
 
-          this.emitProgress('ai_request', { action: `生成角色 ${i + 1}/${playerCount}: ${archetype.name}` });
+          this.emitProgress('ai_request', { action: `生成角色 ${i + 1}/${characterCount}: ${archetype.name}` });
           
           const response = await this.aiProvider.callAPI([
             { role: 'system', content: '你是一个剧本杀编剧，擅长创作有深度的角色。' },
@@ -564,6 +590,9 @@ ${isMurderer ? `【这是凶手角色】凶手动机：${truth.murderMotive}` : 
         };
       }
 
+      // 侦探模式下，所有角色都是NPC
+      const characterType = isSoloMode ? 'npc_suspect' : 'suspect';
+
       await scriptDatabase.createCharacter({
         id: characterId,
         scriptId: scriptId,
@@ -571,9 +600,10 @@ ${isMurderer ? `【这是凶手角色】凶手动机：${truth.murderMotive}` : 
         gender: characterData.gender,
         age: characterData.age,
         occupation: characterData.occupation,
-        characterType: 'suspect',
+        characterType: characterType,
         isMurderer: isMurderer,
         isVictim: false,
+        isNpc: isSoloMode, // 标记是否为NPC
         publicInfo: characterData.publicInfo,
         publicPersonality: characterData.publicPersonality,
         publicBackground: characterData.publicBackground,
@@ -590,6 +620,7 @@ ${isMurderer ? `【这是凶手角色】凶手动机：${truth.murderMotive}` : 
         id: characterId,
         ...characterData,
         isMurderer,
+        isNpc: isSoloMode,
         archetype: archetype.type
       });
     }

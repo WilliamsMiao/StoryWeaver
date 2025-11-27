@@ -1836,8 +1836,17 @@ class Database {
       id, storyId, caseType, victimName, victimDescription,
       murdererName, murdererMotive, murderMethod, murderLocation, murderTime,
       fullTruth, keyEvidence, redHerrings, totalChapters, chapterGoals,
-      locations, interactableItems
+      locations, interactableItems,
+      // 兼容旧字段名
+      culpritId, truthSummary
     } = outline;
+    
+    // 使用兼容逻辑，支持两种字段名
+    const finalMurdererName = murdererName || culpritId || '未知';
+    const finalFullTruth = fullTruth || truthSummary || '';
+    const finalMurdererMotive = murdererMotive || '未知动机';
+    const finalMurderMethod = murderMethod || '未知手法';
+    const finalMurderLocation = murderLocation || '未知地点';
     
     await this.db.run(
       `INSERT INTO story_outlines (
@@ -1847,11 +1856,11 @@ class Database {
         locations, interactable_items
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        id, storyId, caseType, victimName, victimDescription,
-        murdererName, murdererMotive, murderMethod, murderLocation, murderTime,
-        fullTruth, JSON.stringify(keyEvidence), JSON.stringify(redHerrings || []),
-        totalChapters || 3, JSON.stringify(chapterGoals),
-        JSON.stringify(locations), JSON.stringify(interactableItems)
+        id, storyId, caseType || '谋杀案', victimName || '受害者', victimDescription,
+        finalMurdererName, finalMurdererMotive, finalMurderMethod, finalMurderLocation, murderTime,
+        finalFullTruth, JSON.stringify(keyEvidence || []), JSON.stringify(redHerrings || []),
+        totalChapters || 3, JSON.stringify(chapterGoals || []),
+        JSON.stringify(locations || []), JSON.stringify(interactableItems || [])
       ]
     );
   }
