@@ -15,7 +15,9 @@ const __dirname = dirname(__filename);
 class ScriptDatabase {
   constructor() {
     this.db = null;
-    this.dbPath = join(__dirname, 'data', 'scripts.db');
+    // 优先使用环境变量指定的路径（用于Docker volume挂载）
+    const customPath = process.env.SCRIPT_FACTORY_DB_PATH;
+    this.dbPath = customPath || join(__dirname, 'data', 'scripts.db');
   }
 
   async connect() {
