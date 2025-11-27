@@ -641,6 +641,9 @@ export const GameProvider = ({ children }) => {
     
     setLoading(true);
     setError(null);
+    // ★ 重置初始化状态，防止残留状态影响新房间
+    setStoryInitializing(false);
+    setInitProgress({ step: 0, total: 5, message: '' });
     
     socketManager.emit('join_room', {
       roomId,
@@ -925,6 +928,18 @@ export const GameProvider = ({ children }) => {
     setDirectMessages([]);
     setUnreadDirectCount(0);
     setError(null);
+    // ★ 重要：重置初始化状态，防止进入新房间时错误显示加载中
+    setStoryInitializing(false);
+    setInitProgress({ step: 0, total: 5, message: '' });
+    setLoading(false);
+    // ★ 清理章节和谜题状态
+    setChapterTodos([]);
+    setStoryOutline(null);
+    setCurrentPuzzle(null);
+    setPuzzleProgress({});
+    setPuzzleSolvedNotification(null);
+    setMyCharacter(null);
+    setPlayersProgress({});
     // ★ 新增：清理增强功能状态
     setSkills([]);
     setSkillCooldowns({});
