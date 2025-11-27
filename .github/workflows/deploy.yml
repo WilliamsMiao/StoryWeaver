@@ -238,68 +238,55 @@ jobs:
             --exclude '*.log' \
             ./ ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:~/storyweaver/
 
-      - name: Deploy via Docker
+      - name: Create deploy script
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
-            cd ~/storyweaver
-            
-            echo "=========================================="
-            echo "开始 Docker 重新构建和部署"
-            echo "=========================================="
-            
-            # 停止所有服务
-            echo "停止所有服务..."
-            docker compose down || true
-            
-            # 清理旧的镜像（可选，释放空间）
-            docker image prune -f || true
-            
-            # 重新构建后端应用
-            echo "重新构建后端应用..."
-            docker compose build --no-cache storyweaver-app
-            
-            # 重新构建前端静态文件
-            echo "重新构建前端静态文件..."
-            docker compose build --no-cache static-init || true
-            
-            # 先启动后端服务
-            echo "启动后端服务..."
-            docker compose up -d storyweaver-app
-            
-            # 等待后端服务健康
-            echo "等待后端服务启动..."
-            sleep 20
-            
-            # 检查后端服务状态
-            echo "检查后端服务日志..."
-            docker compose logs storyweaver-app --tail 30
-            
-            # 构建前端静态文件
-            echo "构建前端静态文件..."
-            docker compose run --rm static-init || true
-            
-            # 启动 nginx
-            echo "启动 nginx..."
-            docker compose up -d nginx
-            
-            # 最终等待
-            sleep 10
-            
-            echo "检查所有服务状态..."
-            docker compose ps
-            
-            echo "=========================================="
-            echo "验证部署成功"
-            echo "=========================================="
-            echo "服务器上的代码时间戳:"
-            ls -lth backend/server.js | head -1
-            echo "容器内的代码时间戳:"
-            docker compose exec storyweaver-app ls -lth /app/backend/server.js | head -1 || true
-            
-            # 内部健康检查
-            echo "内部健康检查..."
-            docker compose exec storyweaver-app wget -qO- http://localhost:3000/health || echo "内部健康检查失败"
-          ENDSSH
+          cat > /tmp/deploy-docker.sh << 'SCRIPT'
+          #!/bin/bash
+          set -e
+          cd ~/storyweaver
+          
+          echo "=========================================="
+          echo "开始 Docker 重新构建和部署"
+          echo "=========================================="
+          
+          # 停止所有服务
+          echo "停止所有服务..."
+          docker compose down || true
+          
+          # 清理旧的镜像
+          docker image prune -f || true
+          
+          # 重新构建后端应用
+          echo "重新构建后端应用..."
+          docker compose build --no-cache storyweaver-app
+          
+          # 启动所有服务（docker compose 会处理启动顺序和依赖）
+          echo "启动所有服务..."
+          docker compose up -d
+          
+          echo "等待服务启动..."
+          sleep 30
+          
+          echo "检查所有服务状态..."
+          docker compose ps
+          
+          echo "=========================================="
+          echo "验证部署成功"
+          echo "=========================================="
+          echo "服务器上的代码时间戳:"
+          ls -lth backend/server.js | head -1
+          echo "容器内的代码时间戳:"
+          docker compose exec -T storyweaver-app ls -lth /app/backend/server.js 2>/dev/null || echo "无法获取容器内时间戳"
+          
+          # 内部健康检查
+          echo "内部健康检查..."
+          curl -s http://localhost/health || curl -s http://localhost:3000/health || echo "健康检查失败"
+          SCRIPT
+      
+      - name: Upload and execute deploy script
+        run: |
+          scp -o StrictHostKeyChecking=no /tmp/deploy-docker.sh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/tmp/deploy-docker.sh
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "chmod +x /tmp/deploy-docker.sh && /tmp/deploy-docker.sh"
       
       - name: Health check
         run: |
@@ -348,35 +335,33 @@ jobs:
             --exclude '*.log' \
             ./ ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:${{ env.REMOTE_DIR }}/
           
-          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'ENDSSH'
-            cd ~/storyweaver
-            
-            echo "=========================================="
-            echo "Docker构建失败，使用回退部署方案"
-            echo "=========================================="
-            
-            # 停止容器后重新启动，确保使用挂载的最新代码
-            echo "停止并重新启动容器以加载最新代码..."
-            docker compose stop storyweaver-app
-            docker compose up -d storyweaver-app
-            
-            # 重新构建前端静态文件
-            echo "重新构建前端静态文件..."
-            docker compose build --no-cache static-init || true
-            docker compose run --rm static-init || true
-            docker compose restart nginx
-            
-            echo "等待服务启动..."
-            sleep 10
-            
-            echo "检查服务状态..."
-            docker compose ps
-            
-            echo "=========================================="
-            echo "验证部署成功"
-            echo "=========================================="
-            echo "服务器上的代码时间戳:"
-            ls -lth backend/server.js | head -1
-            echo "容器内的代码时间戳:"
-            docker compose exec storyweaver-app ls -lth /app/backend/server.js | head -1
-          ENDSSH
+          cat > /tmp/deploy-fallback.sh << 'SCRIPT'
+          #!/bin/bash
+          cd ~/storyweaver
+          
+          echo "=========================================="
+          echo "Docker构建失败，使用回退部署方案"
+          echo "=========================================="
+          
+          # 停止并重新启动所有服务
+          echo "重新启动所有服务..."
+          docker compose down || true
+          docker compose up -d
+          
+          echo "等待服务启动..."
+          sleep 30
+          
+          echo "检查服务状态..."
+          docker compose ps
+          
+          echo "=========================================="
+          echo "验证部署成功"
+          echo "=========================================="
+          echo "服务器上的代码时间戳:"
+          ls -lth backend/server.js | head -1
+          echo "容器内的代码时间戳:"
+          docker compose exec -T storyweaver-app ls -lth /app/backend/server.js 2>/dev/null || echo "无法获取容器内时间戳"
+          SCRIPT
+          
+          scp -o StrictHostKeyChecking=no /tmp/deploy-fallback.sh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/tmp/deploy-fallback.sh
+          ssh -o StrictHostKeyChecking=no ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "chmod +x /tmp/deploy-fallback.sh && /tmp/deploy-fallback.sh"
