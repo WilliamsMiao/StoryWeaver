@@ -130,11 +130,11 @@ export class MemoryManager {
     const sentences = content.split(/[。！？]/).filter(s => s.trim().length > 5);
     
     // Pre-compiled keyword sets for faster lookup
+    // Note: Only character, event, and world patterns are used for memory extraction
     const patterns = {
       character: new Set(['名字', '角色', '人物', '他', '她', '他们', '她们']),
       event: new Set(['发现', '决定', '承诺', '秘密', '计划', '行动']),
-      world: new Set(['地点', '世界', '规则', '魔法', '设定', '环境']),
-      emotion: new Set(['感情', '情感', '爱', '恨', '恐惧', '希望'])
+      world: new Set(['地点', '世界', '规则', '魔法', '设定', '环境'])
     };
     
     // Process all sentences in a single pass
@@ -161,7 +161,7 @@ export class MemoryManager {
                 importance = 3;
                 break;
               default:
-                continue; // Skip emotion as it wasn't in the original code
+                continue;
             }
             
             memories.push({

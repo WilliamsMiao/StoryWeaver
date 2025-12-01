@@ -73,7 +73,8 @@ export default function StoryPanel() {
     }
     
     if (viewMode === 'direct') {
-      return (directMessages || []).slice().sort((a, b) => {
+      // Sort the array directly without unnecessary slice since useMemo handles memoization
+      return [...(directMessages || [])].sort((a, b) => {
         const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
         const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
         return timeA - timeB;
@@ -81,26 +82,26 @@ export default function StoryPanel() {
     }
     
     // Global view: filter and sort
-    return (messages || [])
-      .filter(m => {
-        // 全局视图：显示所有全局可见的消息，但不包括玩家间私聊
-        return m.type === 'global' || 
-               m.type === 'chapter' || 
-               m.type === 'ai' || 
-               m.type === 'system' ||
-               m.type === 'player' ||
-               (m.visibility === 'global' && 
-                m.type !== 'private' && 
-                m.type !== 'story_machine' &&
-                m.type !== 'player_to_player' &&
-                m.senderId !== 'ai');
-      })
-      .slice()
-      .sort((a, b) => {
-        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-        return timeA - timeB;
-      });
+    const filtered = (messages || []).filter(m => {
+      // 全局视图：显示所有全局可见的消息，但不包括玩家间私聊
+      return m.type === 'global' || 
+             m.type === 'chapter' || 
+             m.type === 'ai' || 
+             m.type === 'system' ||
+             m.type === 'player' ||
+             (m.visibility === 'global' && 
+              m.type !== 'private' && 
+              m.type !== 'story_machine' &&
+              m.type !== 'player_to_player' &&
+              m.senderId !== 'ai');
+    });
+    
+    // Sort the filtered array in place
+    return filtered.sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeA - timeB;
+    });
   }, [viewMode, messages, storyMachineMessages, directMessages]);
 
   // 修复自动滚动问题：延迟滚动确保DOM更新完成

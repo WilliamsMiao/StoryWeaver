@@ -6,6 +6,9 @@ import { LocalAIProvider } from './providers/LocalAIProvider.js';
 import MemoryManager from './memory/MemoryManager.js';
 import RequestQueue from './RequestQueue.js';
 
+// WeakMap for caching lowercase keywords without mutating original objects
+const keywordCache = new WeakMap();
+
 /**
  * AI服务主类
  * 统一管理所有AI提供商，提供统一的接口
@@ -511,7 +514,7 @@ ${relevantTricks.map(t => `- **${t.trick_name}** (${t.trick_type}): ${t.trick_de
 
   /**
    * 检查动态事件触发
-   * Optimized: Pre-compute lowercase input once, cache lowercase keywords
+   * Optimized: Pre-compute lowercase input once, cache lowercase keywords using WeakMap
    */
   checkDynamicEventTrigger(playerInput, dynamicEvents, currentChapter) {
     if (!dynamicEvents || dynamicEvents.length === 0) {
@@ -534,12 +537,14 @@ ${relevantTricks.map(t => `- **${t.trick_name}** (${t.trick_type}): ${t.trick_de
       
       switch (event.trigger_type) {
         case 'keyword':
-          // Cache lowercase keywords if not already done
+          // Cache lowercase keywords using WeakMap to avoid mutating trigger object
           if (trigger.keywords) {
-            if (!trigger._lowerKeywords) {
-              trigger._lowerKeywords = trigger.keywords.map(kw => kw.toLowerCase());
+            let lowerKeywords = keywordCache.get(trigger);
+            if (!lowerKeywords) {
+              lowerKeywords = trigger.keywords.map(kw => kw.toLowerCase());
+              keywordCache.set(trigger, lowerKeywords);
             }
-            if (trigger._lowerKeywords.some(kw => lowerInput.includes(kw))) {
+            if (lowerKeywords.some(kw => lowerInput.includes(kw))) {
               return event;
             }
           }
