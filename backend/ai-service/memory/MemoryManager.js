@@ -120,6 +120,7 @@ export class MemoryManager {
   
   /**
    * 从内容中提取记忆
+   * Optimized: Single pass through sentences, pre-compile patterns
    * @param {string} content - 内容
    * @param {Object} options - 选项
    * @returns {Array} 提取的记忆数组
@@ -128,44 +129,53 @@ export class MemoryManager {
     const memories = [];
     const sentences = content.split(/[。！？]/).filter(s => s.trim().length > 5);
     
-    // 关键词模式
+    // Pre-compiled keyword sets for faster lookup
     const patterns = {
-      character: ['名字', '角色', '人物', '他', '她', '他们', '她们'],
-      event: ['发现', '决定', '承诺', '秘密', '计划', '行动'],
-      world: ['地点', '世界', '规则', '魔法', '设定', '环境'],
-      emotion: ['感情', '情感', '爱', '恨', '恐惧', '希望']
+      character: new Set(['名字', '角色', '人物', '他', '她', '他们', '她们']),
+      event: new Set(['发现', '决定', '承诺', '秘密', '计划', '行动']),
+      world: new Set(['地点', '世界', '规则', '魔法', '设定', '环境']),
+      emotion: new Set(['感情', '情感', '爱', '恨', '恐惧', '希望'])
     };
     
-    sentences.forEach(sentence => {
+    // Process all sentences in a single pass
+    for (const sentence of sentences) {
       const trimmed = sentence.trim();
+      let matched = false;
       
-      // 检查角色信息
-      if (patterns.character.some(keyword => trimmed.includes(keyword))) {
-        memories.push({
-          content: trimmed,
-          memoryType: this.MEMORY_TYPES.CHARACTER,
-          importance: 3
-        });
+      // Check all patterns for this sentence
+      for (const [patternType, keywords] of Object.entries(patterns)) {
+        for (const keyword of keywords) {
+          if (trimmed.includes(keyword)) {
+            let memoryType, importance;
+            switch (patternType) {
+              case 'character':
+                memoryType = this.MEMORY_TYPES.CHARACTER;
+                importance = 3;
+                break;
+              case 'event':
+                memoryType = this.MEMORY_TYPES.EVENT;
+                importance = 4;
+                break;
+              case 'world':
+                memoryType = this.MEMORY_TYPES.WORLD;
+                importance = 3;
+                break;
+              default:
+                continue; // Skip emotion as it wasn't in the original code
+            }
+            
+            memories.push({
+              content: trimmed,
+              memoryType,
+              importance
+            });
+            matched = true;
+            break; // Stop checking this pattern type once matched
+          }
+        }
+        if (matched) break; // Stop checking other patterns once we have a match for this sentence
       }
-      
-      // 检查关键事件
-      if (patterns.event.some(keyword => trimmed.includes(keyword))) {
-        memories.push({
-          content: trimmed,
-          memoryType: this.MEMORY_TYPES.EVENT,
-          importance: 4
-        });
-      }
-      
-      // 检查世界设定
-      if (patterns.world.some(keyword => trimmed.includes(keyword))) {
-        memories.push({
-          content: trimmed,
-          memoryType: this.MEMORY_TYPES.WORLD,
-          importance: 3
-        });
-      }
-    });
+    }
     
     // 去重（基于内容相似度）
     const uniqueMemories = this.deduplicateMemories(memories);
