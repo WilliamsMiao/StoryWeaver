@@ -6,6 +6,9 @@ import { LocalAIProvider } from './providers/LocalAIProvider.js';
 import MemoryManager from './memory/MemoryManager.js';
 import RequestQueue from './RequestQueue.js';
 
+// WeakMap for caching lowercase keywords without mutating original objects
+const keywordCache = new WeakMap();
+
 /**
  * AI服务主类
  * 统一管理所有AI提供商，提供统一的接口
@@ -511,31 +514,48 @@ ${relevantTricks.map(t => `- **${t.trick_name}** (${t.trick_type}): ${t.trick_de
 
   /**
    * 检查动态事件触发
+   * Optimized: Pre-compute lowercase input once, cache lowercase keywords using WeakMap
    */
   checkDynamicEventTrigger(playerInput, dynamicEvents, currentChapter) {
+    if (!dynamicEvents || dynamicEvents.length === 0) {
+      return null;
+    }
+    
     const lowerInput = playerInput.toLowerCase();
     
-    for (const event of dynamicEvents) {
-      if (event.earliest_chapter > currentChapter || event.latest_chapter < currentChapter) {
-        continue;
-      }
-      
+    // Pre-defined search and accusation keywords for faster lookup
+    const searchKeywords = ['搜索', '检查', '调查'];
+    const accusationKeywords = ['指认', '凶手是', '怀疑'];
+    
+    // Filter events by chapter range first to reduce iterations
+    const eligibleEvents = dynamicEvents.filter(
+      event => event.earliest_chapter <= currentChapter && event.latest_chapter >= currentChapter
+    );
+    
+    for (const event of eligibleEvents) {
       const trigger = event.trigger_condition;
       
-      // 根据触发类型检查
       switch (event.trigger_type) {
         case 'keyword':
-          if (trigger.keywords?.some(kw => lowerInput.includes(kw.toLowerCase()))) {
-            return event;
+          // Cache lowercase keywords using WeakMap to avoid mutating trigger object
+          if (trigger.keywords) {
+            let lowerKeywords = keywordCache.get(trigger);
+            if (!lowerKeywords) {
+              lowerKeywords = trigger.keywords.map(kw => kw.toLowerCase());
+              keywordCache.set(trigger, lowerKeywords);
+            }
+            if (lowerKeywords.some(kw => lowerInput.includes(kw))) {
+              return event;
+            }
           }
           break;
         case 'search_action':
-          if (lowerInput.includes('搜索') || lowerInput.includes('检查') || lowerInput.includes('调查')) {
+          if (searchKeywords.some(kw => lowerInput.includes(kw))) {
             return event;
           }
           break;
         case 'accusation':
-          if (lowerInput.includes('指认') || lowerInput.includes('凶手是') || lowerInput.includes('怀疑')) {
+          if (accusationKeywords.some(kw => lowerInput.includes(kw))) {
             return event;
           }
           break;

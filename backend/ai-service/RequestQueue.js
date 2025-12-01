@@ -52,19 +52,26 @@ class RequestQueue {
   
   /**
    * 按优先级插入队列
+   * Optimized: Use binary search for O(log n) insertion instead of O(n)
    */
   insertByPriority(request) {
-    let inserted = false;
-    for (let i = 0; i < this.queue.length; i++) {
-      if (this.queue[i].options.priority < request.options.priority) {
-        this.queue.splice(i, 0, request);
-        inserted = true;
-        break;
+    const priority = request.options.priority;
+    
+    // Binary search to find insertion point
+    let left = 0;
+    let right = this.queue.length;
+    
+    while (left < right) {
+      const mid = Math.floor((left + right) / 2);
+      if (this.queue[mid].options.priority >= priority) {
+        left = mid + 1;
+      } else {
+        right = mid;
       }
     }
-    if (!inserted) {
-      this.queue.push(request);
-    }
+    
+    // Insert at the found position
+    this.queue.splice(left, 0, request);
   }
   
   /**

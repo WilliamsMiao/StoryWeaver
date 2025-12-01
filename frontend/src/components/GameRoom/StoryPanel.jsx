@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { useGame } from '../../context/GameContext';
 import CharacterCard from './CharacterCard';
 import ScriptSelector from './ScriptSelector';
@@ -66,33 +66,43 @@ export default function StoryPanel() {
     }
   }, [viewMode, clearUnreadDirectCount]);
 
-  // 根据viewMode过滤消息
-  const displayMessages = viewMode === 'storyMachine' 
-    ? (storyMachineMessages || [])
-    : viewMode === 'direct'
-    ? (directMessages || []).sort((a, b) => {
-        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-        return timeA - timeB;
-      })
-    : (messages || []).filter(m => {
-        // 全局视图：显示所有全局可见的消息，但不包括玩家间私聊
-        return m.type === 'global' || 
-               m.type === 'chapter' || 
-               m.type === 'ai' || 
-               m.type === 'system' ||
-               m.type === 'player' ||
-               (m.visibility === 'global' && 
-                m.type !== 'private' && 
-                m.type !== 'story_machine' &&
-                m.type !== 'player_to_player' &&
-                m.senderId !== 'ai');
-      }).sort((a, b) => {
-        // 按时间戳排序，确保消息按时间顺序显示
+  // 根据viewMode过滤消息 - Memoized for performance
+  const displayMessages = useMemo(() => {
+    if (viewMode === 'storyMachine') {
+      return storyMachineMessages || [];
+    }
+    
+    if (viewMode === 'direct') {
+      // Sort the array directly without unnecessary slice since useMemo handles memoization
+      return [...(directMessages || [])].sort((a, b) => {
         const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
         const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
         return timeA - timeB;
       });
+    }
+    
+    // Global view: filter and sort
+    const filtered = (messages || []).filter(m => {
+      // 全局视图：显示所有全局可见的消息，但不包括玩家间私聊
+      return m.type === 'global' || 
+             m.type === 'chapter' || 
+             m.type === 'ai' || 
+             m.type === 'system' ||
+             m.type === 'player' ||
+             (m.visibility === 'global' && 
+              m.type !== 'private' && 
+              m.type !== 'story_machine' &&
+              m.type !== 'player_to_player' &&
+              m.senderId !== 'ai');
+    });
+    
+    // Sort the filtered array in place
+    return filtered.sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeA - timeB;
+    });
+  }, [viewMode, messages, storyMachineMessages, directMessages]);
 
   // 修复自动滚动问题：延迟滚动确保DOM更新完成
   // 只在用户没有手动滚动时才自动滚动到底部
@@ -591,8 +601,8 @@ export default function StoryPanel() {
 function MessageItem({ message, viewMode = 'global', storyCharacters = [], onCharacterClick }) {
   const { player, room } = useGame();
   
-  // 格式化时间戳
-  const formatTimestamp = (timestamp) => {
+  // 格式化时间戳 - memoized with useCallback to avoid recreation on every render
+  const formatTimestamp = useCallback((timestamp) => {
     if (!timestamp) return '';
     const date = new Date(timestamp);
     const now = new Date();
@@ -612,7 +622,7 @@ function MessageItem({ message, viewMode = 'global', storyCharacters = [], onCha
         minute: '2-digit'
       });
     }
-  };
+  }, []);
   
   // 全局消息（玩家输入）
   // 判断条件：type为global，或者visibility为global且不是私密消息
@@ -770,6 +780,9 @@ function MessageItem({ message, viewMode = 'global', storyCharacters = [], onCha
   // AI生成的章节
   if (message.type === 'chapter' || message.type === 'ai') {
     // 高亮显示人物名称（玩家@xxx格式，NPC用不同样式）
+    // Pre-compile NPC pattern (static, doesn't change)
+    const NPC_PATTERN = /\[NPC:([^\]]+)\]|@NPC:([^\s，。！？,\.!?]+)/g;
+    
     const highlightCharacters = (content, players) => {
       if (!content) return content;
       
@@ -777,12 +790,13 @@ function MessageItem({ message, viewMode = 'global', storyCharacters = [], onCha
       const playerNames = players ? players.map(p => p.username || p.name).filter(Boolean) : [];
       
       // 先处理NPC标记格式：[NPC:名称] 或 @NPC:名称
-      const npcPattern = /\[NPC:([^\]]+)\]|@NPC:([^\s，。！？,\.!?]+)/g;
+      // Reset regex lastIndex for proper iteration
+      NPC_PATTERN.lastIndex = 0;
       const npcMatches = [];
       let npcMatch;
       
       // 收集所有NPC标记
-      while ((npcMatch = npcPattern.exec(content)) !== null) {
+      while ((npcMatch = NPC_PATTERN.exec(content)) !== null) {
         npcMatches.push({
           start: npcMatch.index,
           end: npcMatch.index + npcMatch[0].length,
@@ -824,7 +838,7 @@ function MessageItem({ message, viewMode = 'global', storyCharacters = [], onCha
       // 合并NPC标记和已知角色匹配
       const allNpcs = [...npcMatches, ...characterMatches].sort((a, b) => a.start - b.start);
       
-      // 处理玩家名称
+      // 处理玩家名称 - Create pattern only if there are player names
       const playerPattern = playerNames.length > 0 
         ? new RegExp(`(${playerNames.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi')
         : null;
